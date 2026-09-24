@@ -77,7 +77,7 @@ Environment variables are not committed. Templates are provided as
 | Key | Notes |
 |---|---|
 | `NODE_ENV` | `production` in production. Controls error detail suppression and disables Sequelize auto-sync. |
-| `PORT` | Defaults to 5002. |
+| `PORT` | Defaults to **5000** (`server/server.js`). Under `docker-compose.yml` the container still listens on 5000 and is published to the host as **5002** (`"5002:5000"`); nginx/PM2 deployments front 5002. Whatever you run, use the `Server running on port N` line from the boot log — `REACT_APP_API_URL` must match it. |
 | `DB_HOST` | Use `127.0.0.1`, not `localhost` — see "Operational notes". |
 | `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_PORT` | MySQL connection. |
 | `JWT_SECRET`, `JWT_REFRESH_SECRET`, `SESSION_SECRET` | Random values. |
