@@ -30,7 +30,9 @@ const sharegramConfig = {
 const firebaseConfig = {
   projectId: process.env.FIREBASE_PROJECT_ID,
   privateKeyId: process.env.FIREBASE_PRIVATE_KEY_ID,
-  privateKey: process.env.FIREBASE_PRIVATE_KEY,
+  // .env では改行がリテラルの "\n" で入るため、実改行に変換する
+  // （他モジュールと同じ扱い。これをしないと秘密鍵がパースできない）
+  privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
   clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
   clientId: process.env.FIREBASE_CLIENT_ID,
   authUri: process.env.FIREBASE_AUTH_URI || 'https://accounts.google.com/o/oauth2/auth',

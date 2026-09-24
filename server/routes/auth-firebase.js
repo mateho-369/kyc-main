@@ -51,16 +51,28 @@ router.post('/firebase-verify', sanitizeFirebaseRequest, validateFirebaseVerify,
     let decodedToken;
     try {
       if (!admin.apps.length) {
-        console.warn('Firebase未初期化、モック認証を使用');
-        decodedToken = {
-          uid: 'mock-uid-' + Date.now(),
-          email: 'mock@example.com',
-          name: 'Mock User'
-        };
-      } else {
-        decodedToken = await admin.auth().verifyIdToken(id_token);
+        // Firebase未初期化のときにモックユーザーを返すと、誰でも
+        // mock@example.com としてログインできてしまう。ここでは失敗させる。
+        const configError = new Error(
+          'Firebase Admin SDK is not configured: FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY are required'
+        );
+        configError.code = 'FIREBASE_NOT_CONFIGURED';
+        throw configError;
       }
+
+      decodedToken = await admin.auth().verifyIdToken(id_token);
     } catch (error) {
+      if (error.code === 'FIREBASE_NOT_CONFIGURED') {
+        console.error('Firebase未設定のため検証を拒否しました:', error.message);
+        return res.status(503).json({
+          success: false,
+          error: {
+            code: 'FIREBASE_NOT_CONFIGURED',
+            message: 'サーバーのFirebase設定が不完全なため、ID Tokenを検証できません'
+          }
+        });
+      }
+
       console.error('Firebase token verification error:', error);
       return res.status(401).json({
         success: false,

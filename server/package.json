@@ -31,7 +31,8 @@
     "precommit": "npm run lint && npm run test:unit",
     "security:audit": "npm audit",
     "security:fix": "npm audit fix",
-    "logs:clear": "rm -rf logs/*.log"
+    "logs:clear": "rm -rf logs/*.log",
+    "diagnose:sso": "node scripts/diagnose-sso-token.js"
   },
   "keywords": [
     "kyc",
