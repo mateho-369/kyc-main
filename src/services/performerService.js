@@ -41,37 +41,9 @@ export const getPerformers = async (filters = {}) => {
   }
 };
 
-// 全出演者一覧の取得（管理者専用）
-export const getAllPerformers = async (filters = {}) => {
-  try {
-    // クエリパラメータを構築
-    const queryParams = new URLSearchParams();
-    
-    if (filters.status) {
-      queryParams.append('status', filters.status);
-    }
-    
-    if (filters.sort) {
-      queryParams.append('sort', filters.sort);
-    }
-    
-    if (filters.expiring) {
-      queryParams.append('expiring', filters.expiring);
-    }
-    
-    if (filters.search) {
-      queryParams.append('search', filters.search);
-    }
-    
-    const query = queryParams.toString() ? `?${queryParams.toString()}` : '';
-    const response = await secureApiClient.get(`/performers/all${query}`);
-    // バックエンドのレスポンス形式に対応
-    return response.data.data;
-  } catch (error) {
-    console.error('全出演者一覧取得エラー:', error);
-    throw error;
-  }
-};
+// 【削除】getAllPerformers: GET /performers/all を叩いていたが、このAPIには
+// そのルートが無い（一覧は GET /performers が user_id/role で絞る。admin は全件）。
+// 未使用だったため削除。必要なら GET /performers?user_id=... を使うこと。
 
 // 出演者詳細の取得
 export const getPerformerById = async (id) => {
@@ -219,7 +191,6 @@ export const checkUserRole = async () => {
 
 export default {
   getPerformers,
-  getAllPerformers,
   getPerformerById,
   createPerformer,
   updatePerformer,

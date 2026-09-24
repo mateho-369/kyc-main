@@ -70,6 +70,19 @@ cd server && npm run migrate   # schema (migrations build it from zero)
 cd server && npm run seed      # optional: promote/create the admin (see Seeding)
 ```
 
+### Read this first
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — where each kind of change goes, the SSO
+  flow, and the list of things that are not wired up (notifications, approvals, `/api/v1`).
+- [`docs/CLEANUP-2026-09-24.md`](docs/CLEANUP-2026-09-24.md) — the 140 unreferenced files
+  removed from `src/`, `server/` and the repo root, how that was verified, and how to restore.
+
+API calls resolve their base URL in exactly one place, `src/config/apiBase.js`
+(`REACT_APP_API_URL`, else the relative `/api`). When pointing the UI at a backend you
+started by hand, set `REACT_APP_API_URL=http://localhost:5000/api` in `.env` —
+otherwise `/api` goes to the dev `proxy` in `package.json`, which is a different server
+with a different database. A dev build prints a console warning when this is unset.
+
 ### Seeding
 
 `npm run seed` promotes one account to `admin`, or creates it if nobody has

@@ -157,7 +157,7 @@ const PerformerDetailPage = () => {
     document.body.removeChild(a);
   } catch (err) {
     console.error('Download error:', err);
-    setError('ダウンロードに失敗しました');
+    setError(err.response?.data?.message || 'ダウンロードに失敗しました');
   }
  };
 
@@ -166,7 +166,7 @@ const PerformerDetailPage = () => {
     await deletePerformer(id);
     navigate('/performers');
   } catch (err) {
-    setError('削除に失敗しました');
+    setError(err.response?.data?.message || '削除に失敗しました');
   }
  };
 
@@ -178,7 +178,9 @@ const PerformerDetailPage = () => {
     const updatedDocs = await getPerformerDocuments(id);
     setDocuments(updatedDocs);
   } catch (err) {
-    setError('確認処理に失敗しました');
+    // 403 の理由（「書類の検証は管理者のみが実行できます。」）をそのまま出す。
+    // 握り潰すと「ボタンが効かない」にしか見えないため。
+    setError(err.response?.data?.message || err.response?.data?.error || '確認処理に失敗しました');
   } finally {
     setVerifyingDoc(null);
   }

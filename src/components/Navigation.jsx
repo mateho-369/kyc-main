@@ -1,9 +1,13 @@
 import React from 'react';
-import { FiHome as Home, FiShield as Shield, FiUser as User, FiFileText as FileText, FiSettings as Settings } from 'react-icons/fi';
+import { FiHome as Home, FiShield as Shield, FiUser as User, FiFileText as FileText, FiX as Close } from 'react-icons/fi';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-const Navigation = () => {
+/**
+ * サイドバー。広い画面（lg〜）は常時表示、狭い画面は Header のメニューボタンで
+ * 開くドロワーとして表示する。中身（sidebar）は同じ要素を使い回す。
+ */
+const Navigation = ({ mobileOpen = false, onClose = () => {} }) => {
   const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -46,8 +50,8 @@ const Navigation = () => {
     });
   }
 
-  return (
-    <aside className="sidebar-nav w-64 min-h-screen hidden lg:block">
+  const sidebar = (
+    <>
       {/* Logo Section */}
       <div className="p-6 border-b border-white/10">
         <div className="flex items-center space-x-3">
@@ -99,8 +103,17 @@ const Navigation = () => {
       <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-white/10">
         <div className="px-4 py-3 rounded-xl bg-white/5">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-navy-600 to-navy-700 flex items-center justify-center">
-              <User className="w-4 h-4 text-navy-300" />
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-navy-600 to-navy-700 flex items-center justify-center overflow-hidden">
+              {user?.profilePicture ? (
+                <img
+                  src={user.profilePicture}
+                  alt=""
+                  className="w-8 h-8 object-cover"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+              ) : (
+                <User className="w-4 h-4 text-navy-300" />
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-white truncate">
@@ -113,7 +126,35 @@ const Navigation = () => {
           </div>
         </div>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      <aside className="sidebar-nav relative w-64 min-h-screen hidden lg:block">{sidebar}</aside>
+
+      {mobileOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="メニュー">
+          <button
+            type="button"
+            aria-label="メニューを閉じる"
+            onClick={onClose}
+            className="absolute inset-0 bg-navy-900/60 backdrop-blur-sm"
+          />
+          <aside className="sidebar-nav relative w-64 min-h-screen shadow-2xl" onClick={onClose}>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="メニューを閉じる"
+              className="absolute top-5 right-3 p-2 rounded-lg text-navy-300 hover:text-white hover:bg-white/10"
+            >
+              <Close className="w-5 h-5" />
+            </button>
+            {sidebar}
+          </aside>
+        </div>
+      )}
+    </>
   );
 };
 

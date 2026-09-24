@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { createFirebaseSession } from '../services/auth';
+// come_back の解錠・安全性判定は utils/sharegramReturn.js（登録画面と共通）
+import { decodeComeBackUrl, isSafeReturnUrl } from '../utils/sharegramReturn';
 
 /**
  * Sharegram SSO認証ページ
@@ -17,31 +19,6 @@ import { createFirebaseSession } from '../services/auth';
  * - performer_id: 出演者ID（action=editの場合は必須）
  * - come_back_url: 操作完了後のSharegramへの戻り先URL（オプション）
  */
-/**
- * Sharegramは come_back を二重にURLエンコードして送ってくることがある
- * （例: come_back=http%253A%252F%252Fshare-gram.com%252Fposts%252Fnew）。
- * searchParams.get() は1回しかデコードしないため、そのまま使うと
- * 「Sharegramに戻る」が壊れたURLに飛んでしまう。安定するまで復号する。
- *
- * @param {string|null} raw
- * @returns {string|null}
- */
-const decodeComeBackUrl = (raw) => {
-  if (!raw) return null;
-  let value = raw;
-  for (let i = 0; i < 3; i += 1) {
-    let decoded;
-    try {
-      decoded = decodeURIComponent(value);
-    } catch (e) {
-      break;
-    }
-    if (decoded === value) break;
-    value = decoded;
-  }
-  return value;
-};
-
 const SSOPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();

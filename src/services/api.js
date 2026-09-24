@@ -1,7 +1,9 @@
 import axios from 'axios';
+import API_URL from '../config/apiBase';
 
-// 環境変数からAPIのURLを取得（デフォルトはローカル環境）
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5002/api';
+// ベース URL は src/config/apiBase.js で一元決定している（このファイルで
+// 独自デフォルトを持たないこと。以前は localhost:5002 が既定で、
+// SecureApiClient.js（既定 '/api'）と実態がズレていた）
 
 // セキュアクッキーの設定
 const SECURE_COOKIES = process.env.REACT_APP_SECURE_COOKIES === 'true';

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { useAuth } from './contexts/AuthContext';
@@ -17,6 +17,13 @@ import KYCSharegramGateway from './components/sharegram/SharegramGateway';
 import DebugTools from './components/DebugTools';
 import OfflineNotification from './components/OfflineNotification';
 import FirebaseAutoAuth from './components/auth/FirebaseAutoAuth';
+// 共通（認証不要）ページ。LoginPage から /terms・/privacy へリンクがあるため
+// ルートが必須（以前はリンク先が / へリダイレクトしていた）。
+import TermsPage from './pages/TermsPage';
+import PrivacyPage from './pages/PrivacyPage';
+import FAQsPage from './pages/FAQsPage';
+import ContactPage from './pages/ContactPage';
+import CancellationPage from './pages/CancellationPage';
 
 // Protected Route コンポーネント（リダイレクトループ対策）
 const ProtectedRoute = ({ children }) => {
@@ -46,12 +53,15 @@ const ProtectedRoute = ({ children }) => {
 };
 
 // Main Layout コンポーネント
+// ヘッダーのメニューボタンとナビは兄弟なので、開閉状態はここで持つ。
 const MainLayout = ({ children }) => {
+  const [navOpen, setNavOpen] = useState(false);
+
   return (
     <div className="flex flex-col min-h-screen">
-      <Header />
+      <Header onToggleNav={() => setNavOpen((open) => !open)} />
       <div className="flex flex-1">
-        <Navigation />
+        <Navigation mobileOpen={navOpen} onClose={() => setNavOpen(false)} />
         <main className="flex-1 bg-gray-100">
           <div className="container mx-auto px-4 py-8">
             {children}
@@ -71,6 +81,11 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/sso" element={<SSOPage />} />
           <Route path="/firebase-login" element={<KYCSharegramGateway />} />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/faq" element={<FAQsPage />} />
+          <Route path="/contact" element={<ContactPage />} />
+          <Route path="/cancellation" element={<CancellationPage />} />
           
           {/* Protected Routes */}
           <Route path="/" element={
@@ -113,13 +128,7 @@ function App() {
             </ProtectedRoute>
           } />
           
-          <Route path="/videos" element={
-            <ProtectedRoute>
-              <MainLayout>
-              </MainLayout>
-            </ProtectedRoute>
-          } />
-          
+
           <Route path="/admin/users" element={
             <ProtectedRoute>
               <MainLayout>

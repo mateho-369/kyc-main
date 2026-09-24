@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { auth } from '../config/firebase';
+import API_BASE_URL from '../config/apiBase';
 import securityEnhancer from './SecurityEnhancer';
 import mockApiInterceptor from './mockApiService';
 
@@ -29,7 +30,7 @@ class SecureApiClient {
   setupClient() {
     // Axiosインスタンスの作成
     this.client = axios.create({
-      baseURL: process.env.REACT_APP_API_URL || '/api',
+      baseURL: API_BASE_URL, // 一元管理: src/config/apiBase.js
       timeout: 60000, // 60秒に延長（大きな画像ファイル対応）
       withCredentials: true, // Cookie送信を有効化
       headers: {
