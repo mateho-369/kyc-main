@@ -1,0 +1,1218 @@
+openapi: 3.0.3
+info:
+  title: SafeVideo KYC API
+  description: |
+    SafeVideo KYC (Know Your Customer) システムのAPIドキュメント
+    
+    ## 認証
+    このAPIは2種類の認証方式をサポートしています：
+    - **JWT認証**: `Authorization: Bearer <token>`
+    - **Firebase認証**: `Firebase-Token: <token>`
+    
+    ## レート制限
+    APIエンドポイントには以下のレート制限が適用されます：
+    - デフォルト: 15分間に100リクエスト
+    - バッチAPI: 15分間に10リクエスト
+    - 検索API: 1分間に30リクエスト
+    
+    ## エラーレスポンス
+    すべてのエラーレスポンスは統一された形式で返されます。
+  version: 1.0.0
+  contact:
+    name: SafeVideo Team
+    email: REPLACE_WITH_ACTUAL_ADDRESS
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: 開発サーバー
+  - url: https://api.safevideo.com/v1
+    description: 本番サーバー
+
+paths:
+  # Batch API
+  /batch/performers:
+    post:
+      tags:
+        - Batch
+      summary: パフォーマー一括インポート
+      description: |
+        パフォーマーデータを一括でインポートします。
+        JSONデータまたはCSVファイルでのインポートに対応しています。
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                performers:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/PerformerInput'
+                dryRun:
+                  type: boolean
+                  default: false
+                  description: テストモード（実際のデータ更新は行わない）
+                skipDuplicates:
+                  type: boolean
+                  default: true
+                  description: 重複データをスキップ
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSVファイル
+                dryRun:
+                  type: boolean
+                  default: false
+      responses:
+        '202':
+          description: バッチジョブが開始されました
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchJobResponse'
+        '400':
+          description: リクエストが無効です
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 認証が必要です
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: アクセス権限がありません
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /batch/jobs/{jobId}:
+    get:
+      tags:
+        - Batch
+      summary: バッチジョブ状況取得
+      description: 指定されたバッチジョブの実行状況を取得します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+          description: バッチジョブID
+      responses:
+        '200':
+          description: ジョブ情報
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchJob'
+        '404':
+          description: ジョブが見つかりません
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Batch
+      summary: バッチジョブキャンセル
+      description: 実行中のバッチジョブをキャンセルします
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+          description: バッチジョブID
+      responses:
+        '200':
+          description: ジョブがキャンセルされました
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "ジョブをキャンセルしました"
+        '400':
+          description: キャンセルできないジョブです
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Bulk API
+  /bulk/update:
+    put:
+      tags:
+        - Bulk
+      summary: 一括更新
+      description: 複数のリソースを一括で更新します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resourceType:
+                  type: string
+                  enum: [performers, users]
+                  description: 更新対象のリソースタイプ
+                ids:
+                  type: array
+                  items:
+                    type: integer
+                  description: 更新対象のID配列
+                updates:
+                  type: object
+                  description: 更新するフィールドと値
+              required:
+                - resourceType
+                - ids
+                - updates
+      responses:
+        '200':
+          description: 一括更新完了
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOperationResponse'
+
+  /bulk/delete:
+    delete:
+      tags:
+        - Bulk
+      summary: 一括削除
+      description: 複数のリソースを一括で削除します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resourceType:
+                  type: string
+                  enum: [performers, users]
+                ids:
+                  type: array
+                  items:
+                    type: integer
+              required:
+                - resourceType
+                - ids
+      responses:
+        '200':
+          description: 一括削除完了
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOperationResponse'
+
+  /bulk/validate:
+    post:
+      tags:
+        - Bulk
+      summary: 一括操作検証
+      description: 一括操作の事前検証を行います
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                operation:
+                  type: string
+                  enum: [update, delete]
+                resourceType:
+                  type: string
+                  enum: [performers, users]
+                ids:
+                  type: array
+                  items:
+                    type: integer
+                updates:
+                  type: object
+                  description: 更新フィールド（updateの場合）
+              required:
+                - operation
+                - resourceType
+                - ids
+      responses:
+        '200':
+          description: 検証結果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkValidationResponse'
+
+  # Search API
+  /search/advanced:
+    post:
+      tags:
+        - Search
+      summary: 高度検索
+      description: 複数条件による高度な検索を実行します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdvancedSearchRequest'
+      responses:
+        '200':
+          description: 検索結果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+
+  /search/suggestions:
+    get:
+      tags:
+        - Search
+      summary: 検索候補取得
+      description: 検索クエリに基づく候補を取得します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+          description: 検索クエリ
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [performers, users]
+          description: 検索対象タイプ
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 10
+            maximum: 50
+          description: 最大取得件数
+      responses:
+        '200':
+          description: 検索候補
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        text:
+                          type: string
+                        type:
+                          type: string
+                        score:
+                          type: number
+
+  /search/export:
+    post:
+      tags:
+        - Search
+      summary: 検索結果エクスポート
+      description: 検索結果をCSV形式でエクスポートします
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/AdvancedSearchRequest'
+                - type: object
+                  properties:
+                    format:
+                      type: string
+                      enum: [csv, xlsx]
+                      default: csv
+                    includeFields:
+                      type: array
+                      items:
+                        type: string
+                      description: エクスポートするフィールド
+      responses:
+        '200':
+          description: エクスポートファイル
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+
+  # Analytics API
+  /analytics/stats:
+    get:
+      tags:
+        - Analytics
+      summary: システム統計取得
+      description: システムの統計情報を取得します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: query
+          name: period
+          schema:
+            type: string
+            enum: [day, week, month, year]
+            default: month
+          description: 集計期間
+        - in: query
+          name: startDate
+          schema:
+            type: string
+            format: date
+          description: 開始日
+        - in: query
+          name: endDate
+          schema:
+            type: string
+            format: date
+          description: 終了日
+      responses:
+        '200':
+          description: 統計情報
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStats'
+
+  /analytics/performance:
+    get:
+      tags:
+        - Analytics
+      summary: パフォーマンス統計取得
+      description: システムのパフォーマンス統計を取得します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      responses:
+        '200':
+          description: パフォーマンス統計
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceStats'
+
+  /analytics/reports/generate:
+    get:
+      tags:
+        - Analytics
+      summary: レポート生成
+      description: 各種レポートを生成します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: query
+          name: reportType
+          required: true
+          schema:
+            type: string
+            enum: [compliance, performance, usage]
+          description: レポートタイプ
+        - in: query
+          name: startDate
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: endDate
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [json, pdf, csv]
+            default: json
+      responses:
+        '200':
+          description: 生成されたレポート
+          content:
+            application/json:
+              schema:
+                type: object
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            text/csv:
+              schema:
+                type: string
+
+  # Webhooks API
+  /webhooks/configure:
+    post:
+      tags:
+        - Webhooks
+      summary: Webhook設定
+      description: 新しいWebhookを設定します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookConfig'
+      responses:
+        '201':
+          description: Webhook作成完了
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+
+  /webhooks:
+    get:
+      tags:
+        - Webhooks
+      summary: Webhook一覧取得
+      description: 設定されているWebhookの一覧を取得します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, inactive]
+      responses:
+        '200':
+          description: Webhook一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhooks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Webhook'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /webhooks/{id}:
+    get:
+      tags:
+        - Webhooks
+      summary: Webhook詳細取得
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Webhook詳細
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+    put:
+      tags:
+        - Webhooks
+      summary: Webhook更新
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookConfig'
+      responses:
+        '200':
+          description: Webhook更新完了
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+    delete:
+      tags:
+        - Webhooks
+      summary: Webhook削除
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Webhook削除完了
+
+  /webhooks/{id}/test:
+    post:
+      tags:
+        - Webhooks
+      summary: Webhookテスト送信
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: テスト送信完了
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  statusCode:
+                    type: integer
+                  response:
+                    type: string
+
+  /webhooks/events/list:
+    get:
+      tags:
+        - Webhooks
+      summary: Webhookイベント一覧
+      description: 利用可能なWebhookイベントの一覧を取得します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      responses:
+        '200':
+          description: イベント一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        description:
+                          type: string
+                        payload:
+                          type: object
+
+  /webhooks/validate:
+    post:
+      tags:
+        - Webhooks
+      summary: Webhook設定検証
+      description: Webhook設定の有効性を検証します
+      security:
+        - bearerAuth: []
+        - firebaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookConfig'
+      responses:
+        '200':
+          description: 検証結果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  errors:
+                    type: array
+                    items:
+                      type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    firebaseAuth:
+      type: apiKey
+      in: header
+      name: Firebase-Token
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: エラーコード
+            message:
+              type: string
+              description: エラーメッセージ
+            statusCode:
+              type: integer
+              description: HTTPステータスコード
+            details:
+              type: object
+              description: エラー詳細情報
+            timestamp:
+              type: string
+              format: date-time
+              description: エラー発生時刻
+      example:
+        error:
+          code: "VALIDATION_ERROR"
+          message: "入力データが無効です"
+          statusCode: 400
+          details:
+            errors:
+              - field: "email"
+                message: "有効なメールアドレスを入力してください"
+          timestamp: "2024-01-01T12:00:00.000Z"
+
+    PerformerInput:
+      type: object
+      properties:
+        lastName:
+          type: string
+          description: 姓
+        firstName:
+          type: string
+          description: 名
+        lastNameRoman:
+          type: string
+          description: 姓（ローマ字）
+        firstNameRoman:
+          type: string
+          description: 名（ローマ字）
+        email:
+          type: string
+          format: email
+          description: メールアドレス
+        phone:
+          type: string
+          description: 電話番号
+        birthDate:
+          type: string
+          format: date
+          description: 生年月日
+        nationality:
+          type: string
+          description: 国籍
+        address:
+          type: string
+          description: 住所
+        notes:
+          type: string
+          description: 備考
+      required:
+        - lastName
+        - firstName
+
+    BatchJobResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: バッチジョブID
+        status:
+          type: string
+          enum: [pending, processing, completed, failed, cancelled]
+          description: ジョブステータス
+        totalItems:
+          type: integer
+          description: 処理対象アイテム数
+        message:
+          type: string
+          description: メッセージ
+        estimatedTime:
+          type: string
+          description: 推定完了時間
+      example:
+        jobId: "batch_123456789"
+        status: "processing"
+        totalItems: 100
+        message: "バッチ処理を開始しました"
+        estimatedTime: "2-3 minutes"
+
+    BatchJob:
+      type: object
+      properties:
+        id:
+          type: string
+          description: ジョブID
+        userId:
+          type: integer
+          description: 実行ユーザーID
+        jobType:
+          type: string
+          description: ジョブタイプ
+        status:
+          type: string
+          enum: [pending, processing, completed, failed, cancelled]
+        totalItems:
+          type: integer
+          description: 総アイテム数
+        processedItems:
+          type: integer
+          description: 処理済みアイテム数
+        successItems:
+          type: integer
+          description: 成功アイテム数
+        failedItems:
+          type: integer
+          description: 失敗アイテム数
+        progress:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: 進捗率（%）
+        errorMessage:
+          type: string
+          description: エラーメッセージ
+        result:
+          type: object
+          description: 処理結果
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+
+    BulkOperationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: 操作成功フラグ
+        summary:
+          type: object
+          properties:
+            total:
+              type: integer
+              description: 対象総数
+            found:
+              type: integer
+              description: 見つかった件数
+            notFound:
+              type: integer
+              description: 見つからなかった件数
+            updated:
+              type: integer
+              description: 更新された件数
+            deleted:
+              type: integer
+              description: 削除された件数
+            skipped:
+              type: integer
+              description: スキップされた件数
+        notFoundIds:
+          type: array
+          items:
+            type: integer
+          description: 見つからなかったID一覧
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              error:
+                type: string
+          description: エラー詳細
+
+    BulkValidationResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+          description: 検証結果
+        summary:
+          type: object
+          properties:
+            total:
+              type: integer
+            found:
+              type: integer
+            notFound:
+              type: integer
+        notFoundIds:
+          type: array
+          items:
+            type: integer
+        impact:
+          type: object
+          description: 影響評価
+        warnings:
+          type: array
+          items:
+            type: string
+          description: 警告メッセージ
+
+    AdvancedSearchRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          description: 検索クエリ
+        filters:
+          type: object
+          properties:
+            status:
+              type: array
+              items:
+                type: string
+            dateRange:
+              type: object
+              properties:
+                from:
+                  type: string
+                  format: date
+                to:
+                  type: string
+                  format: date
+            categories:
+              type: array
+              items:
+                type: string
+        sort:
+          type: object
+          properties:
+            field:
+              type: string
+            order:
+              type: string
+              enum: [asc, desc]
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+              minimum: 1
+              default: 1
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 100
+              default: 20
+        aggregations:
+          type: array
+          items:
+            type: string
+          description: 集計フィールド
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+        aggregations:
+          type: object
+          description: 集計結果
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        totalCount:
+          type: integer
+        queryTime:
+          type: number
+          description: クエリ実行時間（ミリ秒）
+
+    SystemStats:
+      type: object
+      properties:
+        users:
+          type: object
+          properties:
+            total:
+              type: integer
+            active:
+              type: integer
+            newThisPeriod:
+              type: integer
+        performers:
+          type: object
+          properties:
+            total:
+              type: integer
+            approved:
+              type: integer
+            pending:
+              type: integer
+            rejected:
+              type: integer
+        apiUsage:
+          type: object
+          properties:
+            totalRequests:
+              type: integer
+            successRate:
+              type: number
+            averageResponseTime:
+              type: number
+        system:
+          type: object
+          properties:
+            uptime:
+              type: string
+            version:
+              type: string
+            lastUpdate:
+              type: string
+              format: date-time
+
+    PerformanceStats:
+      type: object
+      properties:
+        responseTime:
+          type: object
+          properties:
+            average:
+              type: number
+            p95:
+              type: number
+            p99:
+              type: number
+        throughput:
+          type: object
+          properties:
+            requestsPerSecond:
+              type: number
+            requestsPerMinute:
+              type: number
+        errors:
+          type: object
+          properties:
+            rate:
+              type: number
+            count:
+              type: integer
+            breakdown:
+              type: object
+        cache:
+          type: object
+          properties:
+            hitRate:
+              type: string
+            memoryUsage:
+              type: string
+        database:
+          type: object
+          properties:
+            connectionCount:
+              type: integer
+            queryTime:
+              type: object
+              properties:
+                average:
+                  type: number
+                slow:
+                  type: array
+                  items:
+                    type: object
+
+    WebhookConfig:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Webhook名
+        url:
+          type: string
+          format: uri
+          description: 送信先URL
+        events:
+          type: array
+          items:
+            type: string
+          description: 監視するイベント
+        secret:
+          type: string
+          description: 署名用シークレット
+        active:
+          type: boolean
+          default: true
+          description: 有効フラグ
+        headers:
+          type: object
+          description: カスタムヘッダー
+        retryCount:
+          type: integer
+          minimum: 0
+          maximum: 5
+          default: 3
+          description: リトライ回数
+        timeout:
+          type: integer
+          minimum: 1000
+          maximum: 30000
+          default: 5000
+          description: タイムアウト（ミリ秒）
+      required:
+        - name
+        - url
+        - events
+
+    Webhook:
+      allOf:
+        - $ref: '#/components/schemas/WebhookConfig'
+        - type: object
+          properties:
+            id:
+              type: integer
+            userId:
+              type: integer
+            status:
+              type: string
+              enum: [active, inactive, error]
+            lastTriggered:
+              type: string
+              format: date-time
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+            statistics:
+              type: object
+              properties:
+                totalSent:
+                  type: integer
+                successCount:
+                  type: integer
+                failureCount:
+                  type: integer
+                lastSuccess:
+                  type: string
+                  format: date-time
+                lastFailure:
+                  type: string
+                  format: date-time
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: 現在のページ
+        limit:
+          type: integer
+          description: 1ページあたりの件数
+        totalPages:
+          type: integer
+          description: 総ページ数
+        totalCount:
+          type: integer
+          description: 総件数
+        hasNext:
+          type: boolean
+          description: 次ページ有無
+        hasPrev:
+          type: boolean
+          description: 前ページ有無
+
+tags:
+  - name: Batch
+    description: バッチ処理API
+  - name: Bulk
+    description: 一括操作API
+  - name: Search
+    description: 検索API
+  - name: Analytics
+    description: 統計・分析API
+  - name: Webhooks
+    description: Webhook管理API

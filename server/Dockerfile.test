@@ -1,0 +1,39 @@
+FROM node:18-alpine
+
+# 作業ディレクトリ設定
+WORKDIR /app
+
+# システム依存関係インストール
+RUN apk add --no-cache \
+    bash \
+    curl \
+    git \
+    mysql-client \
+    redis
+
+# package.json と package-lock.json をコピー
+COPY package*.json ./
+
+# Node.js 依存関係インストール
+RUN npm ci --only=production && \
+    npm cache clean --force
+
+# アプリケーションファイルをコピー
+COPY . .
+
+# テスト用ディレクトリ作成
+RUN mkdir -p tests/reports tests/coverage logs
+
+# 権限設定
+RUN chown -R node:node /app
+USER node
+
+# ヘルスチェック用エンドポイント追加
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-3001}/health || exit 1
+
+# ポート公開
+EXPOSE 3001
+
+# 起動スクリプト
+CMD ["npm", "start"]

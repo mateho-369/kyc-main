@@ -1,0 +1,118 @@
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
+import { useAuth } from './contexts/AuthContext';
+import Navigation from './components/Navigation';
+import LoginPage from './pages/LoginPage';
+import DashboardPage from './pages/DashboardPage';
+import PerformersPage from './pages/PerformersPage';
+import PerformerDetailPage from './pages/PerformerDetailPage';
+import AuditLogsPage from './pages/AuditLogsPage';
+import KYCSharegramGateway from './components/sharegram/SharegramGateway';
+import DebugTools from './components/DebugTools';
+import OfflineNotification from './components/OfflineNotification';
+import FirebaseAutoAuth from './components/auth/FirebaseAutoAuth';
+
+// Protected Route コンポーネント（リダイレクトループ対策）
+const ProtectedRoute = ({ children }) => {
+  const { user, isAuthenticated, loading } = useAuth();
+  
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+  
+  if (!isAuthenticated) {
+    // 現在のパスを保存して、ログイン後に戻れるようにする
+    // ただし、ルートパス（/）の場合はredirectパラメータを付けない（ループ防止）
+    const currentPath = window.location.pathname;
+    const shouldRedirect = currentPath && currentPath !== '/' && currentPath !== '/login';
+    
+    const redirectUrl = shouldRedirect ? `/login?redirect=${encodeURIComponent(currentPath)}` : '/login';
+    
+    console.log('認証が必要 - リダイレクト:', redirectUrl);
+    return <Navigate to={redirectUrl} replace />;
+  }
+  
+  return children;
+};
+
+// Main Layout コンポーネント
+const MainLayout = ({ children }) => {
+  return (
+    <div className="min-h-screen bg-gray-100">
+      <Navigation />
+      <main className="container mx-auto px-4 py-8">
+        {children}
+      </main>
+    </div>
+  );
+};
+
+function App() {
+  return (
+    <AuthProvider>
+      <Router>
+        <Routes>
+          {/* Public Routes */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/firebase-login" element={<KYCSharegramGateway />} />
+          
+          {/* Protected Routes */}
+          <Route path="/" element={
+            <ProtectedRoute>
+              <MainLayout>
+                <DashboardPage />
+              </MainLayout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/performers" element={
+            <ProtectedRoute>
+              <MainLayout>
+                <PerformersPage />
+              </MainLayout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/performers/:id" element={
+            <ProtectedRoute>
+              <MainLayout>
+                <PerformerDetailPage />
+              </MainLayout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/videos" element={
+            <ProtectedRoute>
+              <MainLayout>
+              </MainLayout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/audit-logs" element={
+            <ProtectedRoute>
+              <MainLayout>
+                <AuditLogsPage />
+              </MainLayout>
+            </ProtectedRoute>
+          } />
+          
+          {/* 404 Route */}
+          <Route path="*" element={<Navigate to="/" />} />
+        </Routes>
+        
+        {/* Debug Tools - 開発環境でのみ表示 */}
+        <DebugTools />
+        
+        {/* オフライン通知 */}
+        <OfflineNotification />
+      </Router>
+    </AuthProvider>
+  );
+}
+
+export default App;

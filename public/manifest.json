@@ -1,0 +1,48 @@
+{
+  "short_name": "Id Manager",
+  "name": "Id Manager - KYC Management System",
+  "description": "安全で効率的なKYC（本人確認）管理システム",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#3498db",
+  "background_color": "#ffffff",
+  "orientation": "portrait-primary",
+  "lang": "ja",
+  "categories": ["business", "productivity", "security"],
+  "shortcuts": [
+    {
+      "name": "ダッシュボード",
+      "short_name": "Dashboard",
+      "description": "KYCダッシュボードに移動",
+      "url": "/",
+      "icons": [{ "src": "icon-96.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "パフォーマー",
+      "short_name": "Performers",
+      "description": "パフォーマー管理",
+      "url": "/performers",
+      "icons": [{ "src": "icon-96.png", "sizes": "96x96" }]
+    }
+  ]
+}

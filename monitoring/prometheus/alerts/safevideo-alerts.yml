@@ -1,0 +1,209 @@
+groups:
+  - name: safevideo_system
+    interval: 30s
+    rules:
+      # CPU使用率
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is above 80% on {{ $labels.instance }} for more than 5 minutes. Current value: {{ $value }}%"
+
+      # メモリ使用率
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is above 85% on {{ $labels.instance }}. Current value: {{ $value }}%"
+
+      # ディスク使用率
+      - alert: HighDiskUsage
+        expr: |
+          (node_filesystem_size_bytes{fstype!~"tmpfs|fuse.lxcfs"} - node_filesystem_avail_bytes) / node_filesystem_size_bytes * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "Disk space is running low"
+          description: "Disk usage is above 80% on {{ $labels.device }} mounted on {{ $labels.mountpoint }}. Current value: {{ $value }}%"
+
+  - name: safevideo_containers
+    interval: 30s
+    rules:
+      # コンテナダウン
+      - alert: ContainerDown
+        expr: up{job=~".*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: devops
+        annotations:
+          summary: "Container is down"
+          description: "Container {{ $labels.job }} on {{ $labels.instance }} is down for more than 2 minutes"
+
+      # コンテナ再起動
+      - alert: ContainerRestarting
+        expr: |
+          rate(container_last_seen{name!~".*prometheus.*|.*grafana.*"}[15m]) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          team: devops
+        annotations:
+          summary: "Container is restarting frequently"
+          description: "Container {{ $labels.name }} is restarting frequently ({{ $value }} restarts per minute)"
+
+      # コンテナメモリ使用率
+      - alert: ContainerHighMemory
+        expr: |
+          (container_memory_usage_bytes / container_spec_memory_limit_bytes) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          team: devops
+        annotations:
+          summary: "Container memory usage is high"
+          description: "Container {{ $labels.name }} memory usage is above 90%. Current value: {{ $value }}%"
+
+  - name: safevideo_application
+    interval: 30s
+    rules:
+      # APIレスポンスタイム
+      - alert: HighAPIResponseTime
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "API response time is high"
+          description: "95th percentile of API response time is above 2 seconds. Current value: {{ $value }}s"
+
+      # エラー率
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is above 5% for the last 5 minutes. Current value: {{ $value | humanizePercentage }}"
+
+      # ログイン失敗率
+      - alert: HighLoginFailureRate
+        expr: |
+          rate(login_attempts_total{status="failed"}[15m]) / rate(login_attempts_total[15m]) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "High login failure rate"
+          description: "Login failure rate is above 30% for the last 15 minutes. Possible security issue."
+
+  - name: safevideo_database
+    interval: 30s
+    rules:
+      # MySQL接続数
+      - alert: HighMySQLConnections
+        expr: |
+          mysql_global_status_threads_connected / mysql_global_variables_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "MySQL connection pool is almost full"
+          description: "MySQL is using {{ $value | humanizePercentage }} of max connections"
+
+      # MySQLスロークエリ
+      - alert: HighMySQLSlowQueries
+        expr: |
+          rate(mysql_global_status_slow_queries[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High number of slow queries"
+          description: "MySQL is executing {{ $value }} slow queries per second"
+
+      # Redis メモリ使用率
+      - alert: HighRedisMemory
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Redis memory usage is high"
+          description: "Redis is using {{ $value | humanizePercentage }} of max memory"
+
+  - name: safevideo_security
+    interval: 30s
+    rules:
+      # 不審なアクセスパターン
+      - alert: SuspiciousAccessPattern
+        expr: |
+          rate(http_requests_total{status="404"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Suspicious access pattern detected"
+          description: "High rate of 404 errors detected ({{ $value }} per second). Possible scanning activity."
+
+      # 認証失敗の急増
+      - alert: AuthenticationSpike
+        expr: |
+          rate(authentication_failures_total[5m]) > 1
+        for: 3m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "Authentication failure spike"
+          description: "Authentication failures increased to {{ $value }} per second"
+
+  - name: safevideo_business
+    interval: 30s
+    rules:
+      # KYC処理の遅延
+      - alert: KYCProcessingDelay
+        expr: |
+          kyc_processing_duration_seconds{quantile="0.95"} > 300
+        for: 10m
+        labels:
+          severity: warning
+          team: business
+        annotations:
+          summary: "KYC processing is slow"
+          description: "95% of KYC processes are taking more than 5 minutes"
+
+      # アップロード失敗率
+      - alert: HighUploadFailureRate
+        expr: |
+          rate(file_uploads_total{status="failed"}[15m]) / rate(file_uploads_total[15m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High file upload failure rate"
+          description: "File upload failure rate is {{ $value | humanizePercentage }}"

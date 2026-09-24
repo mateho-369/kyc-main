@@ -1,0 +1,277 @@
+# SafeVideo KYC Frontend GitLab CI/CD Configuration
+
+stages:
+  - quality
+  - build
+  - deploy
+  - notify
+
+variables:
+  NODE_VERSION: "18"
+  WORKING_DIR: "safevideo"
+  
+# キャッシュ設定
+.node_cache: &node_cache
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}-node
+    paths:
+      - ${WORKING_DIR}/node_modules/
+      - ${WORKING_DIR}/.npm/
+
+# Node.js環境設定
+.node_setup: &node_setup
+  image: node:${NODE_VERSION}-alpine
+  before_script:
+    - cd ${WORKING_DIR}
+    - npm config set cache .npm
+    - npm ci --prefer-offline
+
+# 品質チェックジョブ
+quality:lint:
+  <<: *node_setup
+  <<: *node_cache
+  stage: quality
+  script:
+    - npm run lint
+  only:
+    - merge_requests
+    - main
+    - production
+
+quality:test:
+  <<: *node_setup
+  <<: *node_cache
+  stage: quality
+  script:
+    - npm test -- --run
+  coverage: '/Lines\s*:\s*(\d+\.\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: ${WORKING_DIR}/coverage/cobertura-coverage.xml
+  only:
+    - merge_requests
+    - main
+    - production
+
+# ビルドジョブ
+build:staging:
+  <<: *node_setup
+  <<: *node_cache
+  stage: build
+  script:
+    # 環境変数設定
+    - |
+      cat > .env.production << EOF
+      NODE_ENV=production
+      GENERATE_SOURCEMAP=false
+      REACT_APP_API_URL=${STAGING_API_URL}
+      REACT_APP_FIREBASE_API_KEY=${FIREBASE_API_KEY}
+      REACT_APP_FIREBASE_AUTH_DOMAIN=${FIREBASE_AUTH_DOMAIN}
+      REACT_APP_FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+      REACT_APP_FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET}
+      REACT_APP_FIREBASE_MESSAGING_SENDER_ID=${FIREBASE_MESSAGING_SENDER_ID}
+      REACT_APP_FIREBASE_APP_ID=${FIREBASE_APP_ID}
+      REACT_APP_USE_SECURE_COOKIES=true
+      REACT_APP_FORCE_HTTPS=true
+      EOF
+    # ビルド実行
+    - npm run build
+    # ビルド情報生成
+    - |
+      echo '{
+        "version": "'$(node -p "require('./package.json').version")'",
+        "buildTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'",
+        "commitHash": "'${CI_COMMIT_SHA}'",
+        "branch": "'${CI_COMMIT_REF_NAME}'",
+        "environment": "staging"
+      }' > build/build-info.json
+  artifacts:
+    paths:
+      - ${WORKING_DIR}/build/
+    expire_in: 1 week
+  only:
+    - main
+
+build:production:
+  <<: *node_setup
+  <<: *node_cache
+  stage: build
+  script:
+    # 環境変数設定
+    - |
+      cat > .env.production << EOF
+      NODE_ENV=production
+      GENERATE_SOURCEMAP=false
+      REACT_APP_API_URL=${PRODUCTION_API_URL}
+      REACT_APP_FIREBASE_API_KEY=${FIREBASE_API_KEY}
+      REACT_APP_FIREBASE_AUTH_DOMAIN=${FIREBASE_AUTH_DOMAIN}
+      REACT_APP_FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+      REACT_APP_FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET}
+      REACT_APP_FIREBASE_MESSAGING_SENDER_ID=${FIREBASE_MESSAGING_SENDER_ID}
+      REACT_APP_FIREBASE_APP_ID=${FIREBASE_APP_ID}
+      REACT_APP_USE_SECURE_COOKIES=true
+      REACT_APP_FORCE_HTTPS=true
+      EOF
+    # ビルド実行
+    - npm run build
+    # 画像最適化
+    - apk add --no-cache findutils
+    - npm install -g imagemin-cli imagemin-pngquant imagemin-mozjpeg imagemin-svgo
+    - find build -name "*.png" -exec imagemin {} --out-dir={} --plugin=pngquant \;
+    - find build -name "*.jpg" -o -name "*.jpeg" -exec imagemin {} --out-dir={} --plugin=mozjpeg \;
+    - find build -name "*.svg" -exec imagemin {} --out-dir={} --plugin=svgo \;
+    # ビルド情報生成
+    - |
+      echo '{
+        "version": "'$(node -p "require('./package.json').version")'",
+        "buildTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'",
+        "commitHash": "'${CI_COMMIT_SHA}'",
+        "branch": "'${CI_COMMIT_REF_NAME}'",
+        "environment": "production"
+      }' > build/build-info.json
+  artifacts:
+    paths:
+      - ${WORKING_DIR}/build/
+    expire_in: 1 month
+  only:
+    - production
+
+# デプロイジョブ（AWS S3 + CloudFront）
+deploy:staging:aws:
+  image: amazon/aws-cli:latest
+  stage: deploy
+  dependencies:
+    - build:staging
+  script:
+    - cd ${WORKING_DIR}
+    # S3へのデプロイ
+    - |
+      aws s3 sync ./build s3://${STAGING_S3_BUCKET} \
+        --delete \
+        --cache-control "public, max-age=31536000" \
+        --exclude "index.html" \
+        --exclude "*.json" \
+        --exclude "robots.txt" \
+        --exclude "sitemap.xml"
+    # index.htmlなどはキャッシュなし
+    - |
+      aws s3 cp ./build/index.html s3://${STAGING_S3_BUCKET}/index.html \
+        --cache-control "no-cache, no-store, must-revalidate" \
+        --content-type "text/html"
+    - |
+      aws s3 cp ./build s3://${STAGING_S3_BUCKET} \
+        --recursive \
+        --cache-control "no-cache" \
+        --exclude "*" \
+        --include "*.json" \
+        --include "robots.txt" \
+        --include "sitemap.xml"
+    # CloudFrontキャッシュ無効化
+    - |
+      aws cloudfront create-invalidation \
+        --distribution-id ${STAGING_CLOUDFRONT_ID} \
+        --paths "/*"
+  environment:
+    name: staging
+    url: https://staging.safevideo-kyc.com
+  only:
+    - main
+
+deploy:production:aws:
+  image: amazon/aws-cli:latest
+  stage: deploy
+  dependencies:
+    - build:production
+  script:
+    - cd ${WORKING_DIR}
+    # S3へのデプロイ
+    - |
+      aws s3 sync ./build s3://${PRODUCTION_S3_BUCKET} \
+        --delete \
+        --cache-control "public, max-age=31536000" \
+        --exclude "index.html" \
+        --exclude "*.json" \
+        --exclude "robots.txt" \
+        --exclude "sitemap.xml"
+    # index.htmlなどはキャッシュなし
+    - |
+      aws s3 cp ./build/index.html s3://${PRODUCTION_S3_BUCKET}/index.html \
+        --cache-control "no-cache, no-store, must-revalidate" \
+        --content-type "text/html"
+    - |
+      aws s3 cp ./build s3://${PRODUCTION_S3_BUCKET} \
+        --recursive \
+        --cache-control "no-cache" \
+        --exclude "*" \
+        --include "*.json" \
+        --include "robots.txt" \
+        --include "sitemap.xml"
+    # CloudFrontキャッシュ無効化
+    - |
+      aws cloudfront create-invalidation \
+        --distribution-id ${PRODUCTION_CLOUDFRONT_ID} \
+        --paths "/*"
+  environment:
+    name: production
+    url: https://safevideo-kyc.com
+  when: manual
+  only:
+    - production
+
+# Docker Registry へのデプロイ（オプション）
+deploy:docker:
+  image: docker:latest
+  services:
+    - docker:dind
+  stage: deploy
+  dependencies:
+    - build:production
+  script:
+    - cd ${WORKING_DIR}
+    # Dockerイメージビルド
+    - docker build -t ${CI_REGISTRY_IMAGE}/frontend:${CI_COMMIT_SHA} .
+    - docker tag ${CI_REGISTRY_IMAGE}/frontend:${CI_COMMIT_SHA} ${CI_REGISTRY_IMAGE}/frontend:latest
+    # レジストリへプッシュ
+    - echo ${CI_REGISTRY_PASSWORD} | docker login -u ${CI_REGISTRY_USER} --password-stdin ${CI_REGISTRY}
+    - docker push ${CI_REGISTRY_IMAGE}/frontend:${CI_COMMIT_SHA}
+    - docker push ${CI_REGISTRY_IMAGE}/frontend:latest
+  when: manual
+  only:
+    - production
+
+# 通知ジョブ
+notify:slack:
+  image: appropriate/curl:latest
+  stage: notify
+  when: always
+  script:
+    - |
+      if [ "$CI_JOB_STATUS" == "success" ]; then
+        STATUS_EMOJI=":white_check_mark:"
+        STATUS_TEXT="succeeded"
+      else
+        STATUS_EMOJI=":x:"
+        STATUS_TEXT="failed"
+      fi
+    - |
+      curl -X POST ${SLACK_WEBHOOK_URL} \
+        -H 'Content-Type: application/json' \
+        -d '{
+          "text": "'"${STATUS_EMOJI}"' Deployment '"${STATUS_TEXT}"'",
+          "attachments": [{
+            "color": "'"$([ "$CI_JOB_STATUS" == "success" ] && echo "good" || echo "danger")"'",
+            "fields": [
+              {"title": "Project", "value": "'"${CI_PROJECT_NAME}"'", "short": true},
+              {"title": "Environment", "value": "'"${CI_ENVIRONMENT_NAME}"'", "short": true},
+              {"title": "Branch", "value": "'"${CI_COMMIT_REF_NAME}"'", "short": true},
+              {"title": "Commit", "value": "'"${CI_COMMIT_SHORT_SHA}"'", "short": true},
+              {"title": "Author", "value": "'"${CI_COMMIT_AUTHOR}"'", "short": true},
+              {"title": "Pipeline", "value": "'"${CI_PIPELINE_URL}"'", "short": true}
+            ]
+          }]
+        }'
+  only:
+    variables:
+      - $SLACK_WEBHOOK_URL

@@ -1,0 +1,212 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // 認証されたユーザーのみアクセス可能
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // ユーザーIDが一致するかチェック
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // 管理者権限を持つユーザーかチェック
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.admin == true ||
+         request.auth.token.role == 'admin' ||
+         request.auth.token.role == 'super_admin');
+    }
+    
+    // モデレーター権限を持つユーザーかチェック
+    function isModerator() {
+      return isAuthenticated() && 
+        (request.auth.token.role == 'moderator' || isAdmin());
+    }
+    
+    // アカウントがアクティブかチェック
+    function isActiveAccount() {
+      return isAuthenticated() && 
+        request.auth.token.accountStatus != 'suspended' &&
+        request.auth.token.accountStatus != 'banned';
+    }
+    
+    // ファイルサイズ制限
+    function checkFileSize(maxSizeMB) {
+      return request.resource.size < maxSizeMB * 1024 * 1024;
+    }
+    
+    // KYCドキュメント用ファイルタイプ
+    function isKYCFileType() {
+      return request.resource.contentType.matches('image/(jpeg|jpg|png|webp)') || 
+             request.resource.contentType == 'application/pdf';
+    }
+    
+    // 画像ファイルタイプ
+    function isImageFileType() {
+      return request.resource.contentType.matches('image/(jpeg|jpg|png|webp|gif)');
+    }
+    
+    // 動画ファイルタイプ
+    function isVideoFileType() {
+      return request.resource.contentType.matches('video/(mp4|webm|ogg|mov)');
+    }
+    
+    // ファイル名の安全性チェック
+    function isSafeFileName() {
+      return !request.resource.name.matches('.*(\\.\\.|\\|\\||&&|;|`|\\$|\\(|\\)|<|>|\\\\).*');
+    }
+    
+    // メタデータの検証
+    function hasRequiredMetadata() {
+      return request.resource.metadata != null &&
+             request.resource.metadata.uploadedBy == request.auth.uid &&
+             request.resource.metadata.uploadedAt != null;
+    }
+    
+    // KYCドキュメントのアップロード
+    match /kyc-documents/{userId}/{documentType}/{fileName} {
+      allow read: if isOwner(userId) || isAdmin() || isModerator();
+      allow create: if isOwner(userId) && 
+                       isActiveAccount() &&
+                       documentType in ['passport', 'idCard', 'driverLicense', 'selfie', 'proofOfAddress'] &&
+                       checkFileSize(10) && 
+                       isKYCFileType() &&
+                       isSafeFileName() &&
+                       hasRequiredMetadata();
+      allow update: if false; // KYCドキュメントは更新不可
+      allow delete: if isAdmin();
+    }
+    
+    // KYC検証用一時ファイル（24時間で自動削除）
+    match /kyc-temp/{userId}/{sessionId}/{fileName} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) && 
+                      isActiveAccount() &&
+                      checkFileSize(10) && 
+                      isKYCFileType() &&
+                      isSafeFileName();
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+    
+    // パフォーマーのプロフィール画像
+    match /performer-profiles/{performerId}/avatar/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(performerId) && 
+                      isActiveAccount() &&
+                      checkFileSize(5) && 
+                      isImageFileType() &&
+                      isSafeFileName() &&
+                      hasRequiredMetadata();
+      allow delete: if isOwner(performerId) || isAdmin();
+    }
+    
+    // パフォーマーのカバー画像
+    match /performer-profiles/{performerId}/cover/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(performerId) && 
+                      isActiveAccount() &&
+                      request.auth.token.kycApproved == true &&
+                      checkFileSize(10) && 
+                      isImageFileType() &&
+                      isSafeFileName() &&
+                      hasRequiredMetadata();
+      allow delete: if isOwner(performerId) || isAdmin();
+    }
+    
+    // 動画コンテンツ（本編）
+    match /videos/{performerId}/{videoId}/content/{fileName} {
+      allow read: if isAuthenticated() && isActiveAccount();
+      allow create: if isOwner(performerId) && 
+                       request.auth.token.kycApproved == true &&
+                       isActiveAccount() &&
+                       checkFileSize(500) && // 500MBまで
+                       isVideoFileType() &&
+                       isSafeFileName() &&
+                       hasRequiredMetadata();
+      allow update: if false; // 動画の更新は不可
+      allow delete: if isOwner(performerId) || isAdmin();
+    }
+    
+    // 動画サムネイル
+    match /videos/{performerId}/{videoId}/thumbnails/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(performerId) && 
+                      request.auth.token.kycApproved == true &&
+                      isActiveAccount() &&
+                      checkFileSize(2) && 
+                      isImageFileType() &&
+                      isSafeFileName() &&
+                      hasRequiredMetadata();
+      allow delete: if isOwner(performerId) || isAdmin();
+    }
+    
+    // 動画プレビュー（短いクリップ）
+    match /videos/{performerId}/{videoId}/preview/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(performerId) && 
+                      request.auth.token.kycApproved == true &&
+                      isActiveAccount() &&
+                      checkFileSize(50) && // 50MBまで
+                      isVideoFileType() &&
+                      isSafeFileName() &&
+                      hasRequiredMetadata();
+      allow delete: if isOwner(performerId) || isAdmin();
+    }
+    
+    // システムアセット（ロゴ、デフォルト画像など）
+    match /system/assets/{assetType}/{fileName} {
+      allow read: if true; // 公開アクセス可能
+      allow write: if isAdmin() && 
+                      checkFileSize(5) && 
+                      (isImageFileType() || request.resource.contentType == 'image/svg+xml');
+    }
+    
+    // 管理者用ファイル
+    match /admin/{category}/{fileName} {
+      allow read: if isAdmin();
+      allow write: if isAdmin() && 
+                      checkFileSize(50) &&
+                      isSafeFileName() &&
+                      hasRequiredMetadata();
+    }
+    
+    // バックアップファイル（スーパー管理者のみ）
+    match /backups/{backupType}/{fileName} {
+      allow read: if request.auth.token.role == 'super_admin';
+      allow write: if request.auth.token.role == 'super_admin' &&
+                      checkFileSize(1000); // 1GBまで
+    }
+    
+    // 一時アップロード領域（6時間で自動削除）
+    match /temp/{userId}/{sessionId}/{fileName} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && 
+                       isActiveAccount() &&
+                       checkFileSize(100) &&
+                       isSafeFileName();
+      allow update: if false;
+      allow delete: if isOwner(userId);
+    }
+    
+    // レポート生成エリア
+    match /reports/{reportType}/{year}/{month}/{fileName} {
+      allow read: if isAdmin() || 
+                     (isOwner(resource.metadata.performerId) && 
+                      reportType == 'performer-earnings');
+      allow write: if false; // システムのみが生成
+    }
+    
+    // 処理済み画像キャッシュ
+    match /processed/{originalPath}/{size}/{fileName} {
+      allow read: if true; // キャッシュされた画像は公開
+      allow write: if false; // システムのみが生成
+    }
+    
+    // デフォルト：すべて拒否
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

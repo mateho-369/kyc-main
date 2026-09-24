@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>削除ボタン動作確認</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-8 bg-gray-100">
+    <div class="max-w-2xl mx-auto bg-white rounded-lg shadow p-6">
+        <h1 class="text-2xl font-bold mb-6">削除ボタン動作確認テスト</h1>
+        
+        <div class="space-y-6">
+            <!-- テスト用のファイル入力 -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">
+                    ファイルアップロードテスト
+                </label>
+                <input type="file" id="testFile" class="mb-2" onchange="handleFileSelect(event)">
+                
+                <!-- プレビューエリア -->
+                <div id="preview" class="hidden mt-2 flex items-center space-x-2">
+                    <img id="previewImage" class="h-20 w-20 object-cover rounded-lg border border-gray-300">
+                    <div class="flex-1">
+                        <p id="fileName" class="text-xs text-green-500"></p>
+                    </div>
+                    <button
+                        type="button"
+                        onclick="removeFile()"
+                        class="text-red-500 hover:text-red-700 p-1"
+                        title="削除"
+                    >
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="bg-blue-50 p-4 rounded">
+                <h2 class="font-bold mb-2">期待される動作:</h2>
+                <ol class="list-decimal list-inside space-y-1">
+                    <li>ファイルを選択すると、サムネイルとファイル名が表示される</li>
+                    <li>ゴミ箱アイコンの削除ボタンが表示される</li>
+                    <li>削除ボタンをクリックすると、ファイルが削除される</li>
+                </ol>
+            </div>
+            
+            <div class="bg-yellow-50 p-4 rounded">
+                <h2 class="font-bold mb-2">本番サイトの確認方法:</h2>
+                <ol class="list-decimal list-inside space-y-1">
+                    <li>ブラウザのキャッシュをクリア（Ctrl+Shift+R または Cmd+Shift+R）</li>
+                    <li><a href="https://stg.id-manager.com/performers/add" target="_blank" class="text-blue-600 underline">出演者登録ページ</a>を開く</li>
+                    <li>各ファイル入力欄で画像を選択</li>
+                    <li>アップロードした画像の右側に赤い削除ボタンが表示されるはず</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedFile = null;
+        
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file && file.type.startsWith('image/')) {
+                selectedFile = file;
+                
+                // プレビュー表示
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('previewImage').src = e.target.result;
+                    document.getElementById('fileName').textContent = file.name;
+                    document.getElementById('preview').classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+        
+        function removeFile() {
+            // ファイルをクリア
+            document.getElementById('testFile').value = '';
+            document.getElementById('preview').classList.add('hidden');
+            selectedFile = null;
+            alert('ファイルが削除されました');
+        }
+    </script>
+</body>
+</html>

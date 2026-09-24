@@ -1,0 +1,137 @@
+services:
+  # テスト用データベース
+  test-mysql:
+    image: mysql:8.0
+    container_name: safevideo-test-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: test-root-password
+      MYSQL_DATABASE: safevideo_test
+      MYSQL_USER: test_user
+      MYSQL_PASSWORD: test_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - test_mysql_data:/var/lib/mysql
+      - ./tests/fixtures/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # テスト用Redis
+  test-redis:
+    image: redis:7-alpine
+    container_name: safevideo-test-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - test_redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 3s
+      retries: 5
+
+  # SafeVideo KYC API (テスト環境)
+  safevideo-api-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: safevideo-api-test
+    environment:
+      NODE_ENV: test
+      PORT: 3001
+      DATABASE_URL: mysql://test_user:test_password@test-mysql:3306/safevideo_test
+      REDIS_HOST: test-redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      JWT_SECRET: test-jwt-secret-key-for-testing-only
+      ENCRYPTION_KEY: test-encryption-key-32-chars-long
+      LOG_LEVEL: error
+      DISABLE_AUTH_FOR_TESTS: false
+    ports:
+      - "3001:3001"
+    depends_on:
+      test-mysql:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    volumes:
+      - ./tests:/app/tests
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - test-network
+
+  # テスト実行専用コンテナ
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-runner
+    container_name: safevideo-test-runner
+    environment:
+      NODE_ENV: test
+      BASE_URL: http://safevideo-api-test:3001
+      DATABASE_URL: mysql://test_user:test_password@test-mysql:3306/safevideo_test
+      REDIS_HOST: test-redis
+      REDIS_PORT: 6379
+    depends_on:
+      safevideo-api-test:
+        condition: service_healthy
+    volumes:
+      - ./tests:/app/tests
+      - ./tests/reports:/app/tests/reports
+      - ./tests/coverage:/app/tests/coverage
+    command: ["npm", "run", "test:integration"]
+    networks:
+      - test-network
+
+  # K6 パフォーマンステスト専用コンテナ
+  k6-performance:
+    image: grafana/k6:latest
+    container_name: safevideo-k6-performance
+    environment:
+      BASE_URL: http://safevideo-api-test:3001
+    depends_on:
+      safevideo-api-test:
+        condition: service_healthy
+    volumes:
+      - ./tests/performance:/scripts
+      - ./tests/performance/reports:/reports
+    command: ["run", "--out", "json=/reports/k6-results.json", "/scripts/k6-config.js"]
+    networks:
+      - test-network
+
+  # Cypress E2Eテスト専用コンテナ
+  cypress-e2e:
+    image: cypress/included:12.10.0
+    container_name: safevideo-cypress-e2e
+    environment:
+      CYPRESS_baseUrl: http://safevideo-api-test:3001
+      NODE_ENV: test
+    depends_on:
+      safevideo-api-test:
+        condition: service_healthy
+    volumes:
+      - ./tests/e2e:/e2e
+      - ./tests/e2e/videos:/e2e/videos
+      - ./tests/e2e/screenshots:/e2e/screenshots
+    working_dir: /e2e
+    command: ["cypress", "run", "--config-file", "cypress.config.js"]
+    networks:
+      - test-network
+
+volumes:
+  test_mysql_data:
+    driver: local
+  test_redis_data:
+    driver: local
+
+networks:
+  test-network:
+    driver: bridge

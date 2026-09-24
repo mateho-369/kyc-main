@@ -1,0 +1,52 @@
+FROM node:18-alpine
+
+# 作業ディレクトリ設定
+WORKDIR /app
+
+# システム依存関係インストール（テストツール含む）
+RUN apk add --no-cache \
+    bash \
+    curl \
+    git \
+    mysql-client \
+    redis \
+    chromium \
+    nss \
+    freetype \
+    freetype-dev \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+# Chromium環境変数設定
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+# package.json と package-lock.json をコピー
+COPY package*.json ./
+
+# 全依存関係インストール（devDependencies含む）
+RUN npm ci && \
+    npm cache clean --force
+
+# K6 インストール
+RUN wget -q -O - https://dl.k6.io/key.gpg | apk add --no-cache gnupg && \
+    gpg --import && \
+    echo "https://dl.k6.io/apk/k6-stable main" | tee -a /etc/apk/repositories && \
+    apk add --no-cache k6
+
+# アプリケーションファイルをコピー
+COPY . .
+
+# テスト用ディレクトリ作成
+RUN mkdir -p tests/reports tests/coverage tests/e2e/videos tests/e2e/screenshots
+
+# 権限設定
+RUN chown -R node:node /app
+USER node
+
+# テスト実行用のエントリーポイント
+COPY --chown=node:node tests/scripts/docker-test-runner.sh /app/docker-test-runner.sh
+RUN chmod +x /app/docker-test-runner.sh
+
+ENTRYPOINT ["/app/docker-test-runner.sh"]
