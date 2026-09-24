@@ -475,6 +475,26 @@ const PerformerDetailPage = () => {
                   >
                     <Download className="h-4 w-4" />
                   </button>
+
+                  {/*
+                    検証（承認）。handleVerify は実装済みなのにどのボタンからも呼ばれて
+                    おらず、管理者でもこの画面から書類を確定できなかった。
+                    API: PUT /api/performers/:id/documents/:type/verify（管理者限定）。
+                  */}
+                  {(userRole === 'admin' || userRole === 'superadmin') && (
+                    <button
+                      onClick={() => handleVerify(doc.type)}
+                      disabled={verifyingDoc === doc.type}
+                      title={doc.status === 'verified' ? '検証済み（再検証）' : 'この書類を検証する'}
+                      className={`p-2.5 rounded-lg transition-all duration-200 ${
+                        doc.status === 'verified'
+                          ? 'text-success-600 hover:bg-success-50'
+                          : 'text-navy-500 hover:text-navy-800 hover:bg-navy-100'
+                      } ${verifyingDoc === doc.type ? 'opacity-50 cursor-wait' : ''}`}
+                    >
+                      <CheckCircle className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>

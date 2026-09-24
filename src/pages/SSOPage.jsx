@@ -173,14 +173,22 @@ const SSOPage = () => {
   }, [searchParams, navigate, login]);
 
   // エラー時のSharegramへ戻るハンドラ
+  /**
+   * 「Sharegramに戻る」。come_back はクエリパラメータで外部から来る値なので、
+   * そのまま location.href に渡すと ?come_back=javascript:... で自傷XSSになる。
+   * http/https と確認できる物だけ使い、それ以外はダッシュボードへ落とす。
+   */
   const handleReturnToSharegram = () => {
     const comeBackUrl = sessionStorage.getItem('sharegram_come_back_url');
-    if (comeBackUrl) {
-      window.location.href = comeBackUrl;
-    } else {
-      // come_back_urlがない場合はログインページへ
-      navigate('/login');
+    if (isSafeReturnUrl(decodeComeBackUrl(comeBackUrl))) {
+      window.location.href = decodeComeBackUrl(comeBackUrl);
+      return;
     }
+    if (comeBackUrl) {
+      console.warn('[come_back] 安全でない戻り先のため遷移しません:', comeBackUrl);
+    }
+    // 戻り先が無い／使えない場合：認証済みならダッシュボード、未認証ならログイン
+    navigate(isAuthenticated ? '/' : '/login', { replace: true });
   };
 
   // 再試行ハンドラ
