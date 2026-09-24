@@ -40,12 +40,33 @@ const mockMatches = (row, where = {}) =>
     return row[key] === expected;
   });
 
+/**
+ * Users.profilePicture is VARCHAR(512) in MySQL strict mode. The mock enforces
+ * that width so an oversized value fails here exactly as it would on a real
+ * database — without this, the "sharegram avatar is an encrypted blob" bug was
+ * invisible to the suite.
+ */
+const COLUMN_WIDTHS = { profilePicture: 512 };
+
+const assertFitsColumns = (values) => {
+  Object.entries(COLUMN_WIDTHS).forEach(([column, width]) => {
+    const value = values[column];
+    if (typeof value === 'string' && value.length > width) {
+      const error = new Error(`Data too long for column '${column}' at row 1`);
+      error.code = 'ER_DATA_TOO_LONG';
+      error.sqlMessage = `Data too long for column '${column}' at row 1`;
+      throw error;
+    }
+  });
+};
+
 class MockUser {
   constructor(values) {
     Object.assign(this, values);
   }
 
   async update(values) {
+    assertFitsColumns(values);
     Object.assign(this, values, { updatedAt: new Date() });
     return this;
   }
@@ -59,6 +80,7 @@ class MockUser {
   }
 
   static async create(values) {
+    assertFitsColumns(values);
     const user = new MockUser({
       id: mockDb.nextUserId++,
       role: 'user',
@@ -164,6 +186,14 @@ const mockFirebaseAccounts = {
     last_name: 'David',
     sharegram_user_id: '12046',
     firebase: { identities: { email: ['hana-claims@gmail.com'] }, sign_in_provider: 'custom' }
+  },
+  'uid-makara-0005': {
+    uid: 'uid-makara-0005',
+    email: 'makara@gmail.com',
+    email_verified: true,
+    displayName: null,
+    photoURL: null,
+    firebase: { identities: { email: ['makara@gmail.com'] }, sign_in_provider: 'custom' }
   },
   'uid-api-lookup-0004': {
     uid: 'uid-api-lookup-0004',
@@ -453,6 +483,121 @@ describe('Sharegram SSO -> POST /api/auth/firebase-session', () => {
     } finally {
       delete process.env.SHAREGRAM_ACCOUNT_API_URL;
       delete process.env.SHAREGRAM_API_KEY;
+    }
+  });
+
+  it('stores the real Sharegram account even when avatar is an encrypted blob', async () => {
+    // Sharegram's real payload (as sent in production) carries a long encrypted
+    // string in `avatar`, not a URL. Writing that into Users.profilePicture
+    // (VARCHAR(512)) used to abort user creation with "Data too long for column
+    // 'profilePicture'" — i.e. the Sharegram user never reached the database.
+    process.env.SHAREGRAM_ACCOUNT_API_URL = 'https://api.share-gram.com/api/v2';
+    process.env.SHAREGRAM_API_KEY = 'sharegram-api-key-test-2025';
+
+    const axios = require('axios');
+    axios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          id: 12046,
+          first_name: 'Jonthon',
+          last_name: 'David',
+          account_name: 'Hana',
+          account_id: 'Hana1',
+          email: 'hana@gmail.com',
+          avatar: `U2FsdGVkX1${'k'.repeat(3000)}`
+        }
+      }
+    });
+
+    try {
+      const res = await request(buildApp())
+        .post('/api/auth/firebase-session')
+        .send({ idToken: firebaseIdTokenFor('uid-api-lookup-0004') });
+
+      expect(res.status).toBe(200);
+      const saved = mockDb.users.find((u) => u.email === 'hana@gmail.com');
+      // the identity is still persisted in full ...
+      expect(saved.name).toBe('Hana');
+      expect(saved.sharegramUserId).toBe('12046');
+      expect(saved.authProvider).toBe('firebase');
+      // ... only the unusable picture is dropped (null, or left untouched)
+      expect(saved.profilePicture ?? null).toBeNull();
+    } finally {
+      delete process.env.SHAREGRAM_ACCOUNT_API_URL;
+      delete process.env.SHAREGRAM_API_KEY;
+      axios.get.mockReset();
+    }
+  });
+
+  it('keeps a real avatar URL when it fits the column', async () => {
+    process.env.SHAREGRAM_ACCOUNT_API_URL = 'https://api.share-gram.com/api/v2';
+    process.env.SHAREGRAM_API_KEY = 'sharegram-api-key-test-2025';
+
+    const axios = require('axios');
+    axios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          id: 12047,
+          account_name: 'Makara',
+          email: 'makara@gmail.com',
+          avatar: 'https://cdn.share-gram.com/u/makara/200.jpg'
+        }
+      }
+    });
+
+    try {
+      const res = await request(buildApp())
+        .post('/api/auth/firebase-session')
+        .send({ idToken: firebaseIdTokenFor('uid-makara-0005') });
+
+      expect(res.status).toBe(200);
+      expect(mockDb.users.find((u) => u.email === 'makara@gmail.com').profilePicture).toBe(
+        'https://cdn.share-gram.com/u/makara/200.jpg'
+      );
+    } finally {
+      delete process.env.SHAREGRAM_ACCOUNT_API_URL;
+      delete process.env.SHAREGRAM_API_KEY;
+      axios.get.mockReset();
+    }
+  });
+
+  it('keeps an existing picture when a later sign-in cannot fetch one', async () => {
+    // Same account, two sign-ins. The first gets a usable avatar URL, the
+    // second reaches a failing Sharegram API. The stored picture must survive
+    // rather than being cleared by the failed enrichment.
+    process.env.SHAREGRAM_ACCOUNT_API_URL = 'https://api.share-gram.com/api/v2';
+    process.env.SHAREGRAM_API_KEY = 'sharegram-api-key-test-2025';
+
+    const axios = require('axios');
+    const avatarUrl = 'https://cdn.share-gram.com/u/makara/200.jpg';
+    axios.get
+      .mockResolvedValueOnce({
+        data: { success: true, data: { id: 12047, account_name: 'Makara', email: 'makara@gmail.com', avatar: avatarUrl } }
+      })
+      .mockRejectedValueOnce(new Error('ETIMEDOUT'));
+
+    try {
+      const first = await request(buildApp())
+        .post('/api/auth/firebase-session')
+        .send({ idToken: firebaseIdTokenFor('uid-makara-0005') });
+      expect(first.status).toBe(200);
+      const saved = mockDb.users.find((u) => u.email === 'makara@gmail.com');
+      expect(saved.profilePicture).toBe(avatarUrl);
+
+      const second = await request(buildApp())
+        .post('/api/auth/firebase-session')
+        .send({ idToken: firebaseIdTokenFor('uid-makara-0005') });
+
+      expect(second.status).toBe(200);
+      // still one row, and the picture was not wiped
+      expect(mockDb.users.filter((u) => u.email === 'makara@gmail.com')).toHaveLength(1);
+      expect(saved.profilePicture).toBe(avatarUrl);
+    } finally {
+      delete process.env.SHAREGRAM_ACCOUNT_API_URL;
+      delete process.env.SHAREGRAM_API_KEY;
+      axios.get.mockReset();
     }
   });
 

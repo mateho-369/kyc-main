@@ -59,7 +59,12 @@ const resolveProfile = async ({ claims, identity, firebaseProfile, email }) => {
   return {
     name,
     sharegramUserId: account?.sharegramUserId || claims.sharegram_user_id || null,
-    avatar: account?.avatar || firebaseProfile?.photoURL || claims.picture || null
+    // ここでも一度絞る（サービス側の正規化を通らない出所——Firebase の
+    // photoURL や picture クレーム——があるため）。512字を超えると
+    // Users.profilePicture への書き込み自体が失敗する。
+    avatar: sharegramAccount.safeProfilePicture(
+      account?.avatar || firebaseProfile?.photoURL || claims.picture
+    )
   };
 };
 

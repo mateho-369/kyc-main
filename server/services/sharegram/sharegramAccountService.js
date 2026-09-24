@@ -36,6 +36,33 @@ const isConfigured = () => {
 const cleanString = (value) =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 
+// users.profilePicture は STRING(512)。Sharegram が返す avatar は
+// 暗号化された長文（数KB）でURLですらないため、そのまま入れると
+//   Error [MySQL]: Data too long for column 'profilePicture'
+// でユーザー作成そのものが失敗する（＝SSO失敗）。URLらしさ+長さで絞る。
+const PROFILE_PICTURE_MAX_LENGTH = 512;
+const HTTP_URL = /^https?:\/\/\S+$/i;
+
+/**
+ * 画像として保存してよい URL か（data: / 暗号化文字列は false）
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+const isUsableImageUrl = (value) =>
+  typeof value === 'string' && HTTP_URL.test(value.trim());
+
+/**
+ * Users.profilePicture に入る形に整える。条件を満たさなければ null。
+ * @param {unknown} value
+ * @param {number} [maxLength]
+ * @returns {string|null}
+ */
+const safeProfilePicture = (value, maxLength = PROFILE_PICTURE_MAX_LENGTH) => {
+  if (!isUsableImageUrl(value)) return null;
+  const url = value.trim();
+  return url.length <= maxLength ? url : null;
+};
+
 /**
  * Sharegram API のレスポンス（{success, data:{...}} 形式）を正規化する
  * @param {Object} payload
@@ -52,7 +79,7 @@ const normalizeAccount = (payload) => {
     firstName: cleanString(data.first_name),
     lastName: cleanString(data.last_name),
     email: cleanString(data.email),
-    avatar: cleanString(data.avatar)
+    avatar: safeProfilePicture(data.avatar)
   };
 
   const hasAnything = Object.values(account).some((value) => value !== null);
@@ -103,7 +130,7 @@ const fromTokenClaims = (claims) => {
     first_name: claims.first_name ?? claims.firstName ?? null,
     last_name: claims.last_name ?? claims.lastName ?? null,
     email: claims.email ?? null,
-    avatar: claims.picture ?? claims.avatar ?? null
+    avatar: safeProfilePicture(claims.picture ?? claims.avatar)
   });
 };
 
@@ -121,6 +148,9 @@ const displayName = (account) => {
 
 module.exports = {
   isConfigured,
+  isUsableImageUrl,
+  safeProfilePicture,
+  PROFILE_PICTURE_MAX_LENGTH,
   findAccountByEmail,
   fromTokenClaims,
   displayName,
