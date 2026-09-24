@@ -199,14 +199,23 @@ Migration `up`/`down` in `server/migrations/` are wrapped in
 drop" errors and re-raises everything else, so a synced database can be brought
 up to date in one pass (the skips are logged as `[migrate:<name>] SKIP ...`).
 
-`sequelize-cli` loads `server/config/config.js`, which is **not** in the
-repository — without it `db:migrate` fails on a fresh clone. Copy the template
-and confirm it points at the same database the API uses:
+`server/config/config.js` (the file `sequelize-cli` loads) **is** committed and
+holds no credentials — it resolves `MYSQL_*` / `DB_*` in exactly the same order
+as `config/db.js`, so the CLI and the API cannot end up on different databases.
+If a machine still has an old hand-written `config.js` with values hardcoded in
+it, delete it and put those values in `server/.env` instead; keep the repo copy
+clean. Without this file the CLI aborts before connecting:
+
+```
+ERROR: Cannot find "...\server\config\config.json". Have you run "sequelize init"?
+```
+
+Check the history and the schema state with:
 
 ```bash
 cd server
-cp config/config.example.js config/config.js   # then edit only if you must
-npx sequelize-cli db:migrate:status            # what is already recorded
+npx sequelize-cli db:migrate:status   # what is already recorded
+npm run check:schema                  # columns + SequelizeMeta + CLI-vs-app DB
 ```
 
 ## Current limitations

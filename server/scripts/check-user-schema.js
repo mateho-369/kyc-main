@@ -151,14 +151,20 @@ const run = async () => {
   console.log('\n=== sequelize-cli の設定との比較 ===');
   const cliConfigPath = path.join(SERVER_DIR, 'config', 'config.js');
   if (!fs.existsSync(cliConfigPath)) {
+    // config/config.js はリポジトリに含まれている（認証情報は書かない）。
+    // 無いとすれば、うっかり削除・未追跡化された場合。
     console.log('  [FAIL] config/config.js がありません → db:migrate は実行できません');
-    console.log('  → cp config/config.example.js config/config.js');
+    console.log('  → git checkout -- server/config/config.js （リポジトリ版を復元）');
   } else {
     try {
-      // eslint-disable-next-line global-require, import/no-dynamic-require
       const cliConfig = require(cliConfigPath);
       const env = process.env.NODE_ENV === 'production' ? 'production' : 'development';
       const cli = cliConfig[env] || {};
+      if (Array.isArray(cliConfig.loadedEnvFiles)) {
+        console.log(
+          `  [INFO] CLI が読んだ .env = ${cliConfig.loadedEnvFiles.length ? cliConfig.loadedEnvFiles.join(', ') : '(なし → 既定値で接続)'}`
+        );
+      }
       const cliDb = cli.database;
       console.log(`  [INFO] CLI (${env}) = ${cli.username || '?'}@${cli.host || '?'}:${cli.port || 3306}/${cliDb}`);
       if (cliDb && cliDb !== current[0].db) {
