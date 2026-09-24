@@ -144,8 +144,9 @@ const run = async () => {
         console.log(`  ${flag} #${u.id} ${u.email}  name=${u.name}  provider=${u.authProvider}  picture=${picture}`);
       });
       if (!users.some((u) => u.role === 'admin')) {
-        console.log('  [INFO] 管理者が1人もいません。approve / analytics 系を使うなら');
-        console.log('         server/.env に SEED_ADMIN_EMAIL=<自分のemail> → npm run seed');
+        console.log('  [INFO] 管理者が1人もいません。npm run seed で足りる物を両方作れます:');
+        console.log('         ・開発用アカウント dev.user@example.com / dev.admin@example.com');
+        console.log('         ・Sharegram実アカウントの昇格: server/.env に SEED_ADMIN_EMAIL=<自分のemail>');
       }
     } catch (error) {
       // updated_at の有無など、DB側の微妙な違いで本体の判定を止めない

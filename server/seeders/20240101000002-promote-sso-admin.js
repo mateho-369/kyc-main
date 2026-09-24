@@ -13,6 +13,10 @@
  * 昇格用のシードはこれまでリポジトリに存在しなかった（server/seeders/ 自体が
  * 無いため `npm run seed` は何もできませんでした）。
  *
+ * 実行順: 0001-seed-dev-accounts（開発用の架空アカウントを作る）→ 本シード
+ * （Sharegram の実アカウントを昇格する）。本シードはemail指定のみで動き、
+ * SEED_ADMIN_EMAIL 未設定なら何もせず終わります。
+ *
  * 【方針】
  * 認証情報は git に書かない。誰を admin にするかだけ server/.env の
  * SEED_ADMIN_EMAIL で渡し、パスワードは作らない（ランダム値なので
@@ -21,16 +25,17 @@
  */
 
 const crypto = require('crypto');
+const { assertRole, assertSeedAllowed, normalizeEmail } = require('../utils/seedGuard');
 
-const targetEmail = () => {
-  const email = String(process.env.SEED_ADMIN_EMAIL || '').trim().toLowerCase();
-  return email.includes('@') ? email : null;
-};
-
-const targetRole = () => String(process.env.SEED_ADMIN_ROLE || 'admin').trim() || 'admin';
+const targetEmail = () => normalizeEmail(process.env.SEED_ADMIN_EMAIL);
+const targetRole = () => assertRole(process.env.SEED_ADMIN_ROLE || 'admin');
 
 module.exports = {
   up: async () => {
+    // 本番でも実行可（パスワードはランダム生成なので漏れる認証情報が無い）。
+    // DISABLE_DB=true のときだけスキップする。
+    if (!(await assertSeedAllowed('promote-sso-admin', { allowProduction: true }))) return;
+
     const email = targetEmail();
     if (!email) {
       console.log('[seed] SEED_ADMIN_EMAIL が未設定（または不正）なので何もしません');

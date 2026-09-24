@@ -85,21 +85,48 @@ with a different database. A dev build prints a console warning when this is uns
 
 ### Seeding
 
-`npm run seed` promotes one account to `admin`, or creates it if nobody has
-signed in yet. It is configured entirely through `server/.env` so no credentials
-land in git, and it is idempotent:
+### Seeding
+
+After `npm run migrate` the database has the right *shape* but **zero users**. Two
+seeders exist; both are idempotent, and `npm run seed` runs them in order
+(or `npm run db:setup`, which is `migrate && seed`):
+
+| seeder | what it does | needs env? |
+| --- | --- | --- |
+| `0001-seed-dev-accounts` | creates a **normal user** and an **admin** you can log in as on a dev DB | no (dev defaults) |
+| `0002-promote-sso-admin` | promotes *your real Sharegram account* to `admin` | `SEED_ADMIN_EMAIL` |
+
+```bash
+cd server
+npm run migrate && npm run seed      # or: npm run db:setup
+npm run seed:status                 # what has been applied
+npm run seed:undo                   # down() both seeders
+```
+
+The dev accounts (only ever created outside production):
 
 ```
-SEED_ADMIN_EMAIL=makara@gmail.com   # required; seed is a no-op when unset
-SEED_ADMIN_ROLE=admin               # optional, defaults to admin
-SEED_ADMIN_NAME=Makara              # optional, only used when creating
+dev.user@example.com   /  DevUser@12345    role=user
+dev.admin@example.com  /  DevAdmin@12345   role=admin
 ```
 
-An SSO-provisioned account is `role: 'user'`, which is enough for the performer
-flow (create, list, documents, verify). Admin is only needed for
-`POST /api/performers/:id/approve`, the `/api/v1/analytics|bulk|batch|integrations`
-endpoints, and the admin sections of the UI. Seeded accounts get a random 32-byte
-password, so they can only sign in through Sharegram SSO.
+Override any of it in `server/.env` — `SEED_USER_EMAIL`, `SEED_USER_PASSWORD`,
+`SEED_USER_NAME`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME`,
+`SEED_ADMIN_ROLE`. Rules the seeders enforce, and why:
+
+- **`NODE_ENV=production` aborts** with an error naming `SEED_ALLOW_INSECURE`, rather
+  than quietly creating `admin@example.com` on a real database. Passwords shorter than
+  8 characters are rejected before bcrypt, and a role outside the `ENUM('admin','user')`
+  is rejected before MySQL can answer with `Data truncated`. (`manager` and `superadmin`
+  do **not** exist in this column even though some frontend code mentions `superadmin`.)
+- An existing row is never re-passworded: the seed only aligns `role`, and says so.
+- Created rows are named `… (dev seed)`; `down()` deletes **only** rows still carrying
+  that marker with the expected role and no `firebaseUid` / `sharegramUserId` — so a
+  row that has since been linked to Sharegram, or renamed by a human, survives undo.
+- `SEED_ADMIN_EMAIL` unset (or without an `@`) makes the second seeder a clean no-op.
+- A Sharegram SSO sign-in still wins over all of this: `getOrCreateUserFromFirebase`
+  matches by email, so `SEED_ADMIN_EMAIL=makara@gmail.com` promotes the row SSO uses and
+  nothing else changes.
 
 Do not run `npm run db:reset` on a database you care about: it is
 `db:drop && db:create && migrate && seed`, i.e. it deletes the schema and every

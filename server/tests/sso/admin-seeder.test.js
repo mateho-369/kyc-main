@@ -10,7 +10,7 @@ process.env.NODE_ENV = 'test';
 
 const crypto = require('crypto');
 
-const SEEDER = '../../seeders/20240101000001-promote-sso-admin';
+const SEEDER = '../../seeders/20240101000002-promote-sso-admin';
 
 const mockUserModel = (rows = []) => {
   const model = {
