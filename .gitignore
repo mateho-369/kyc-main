@@ -128,3 +128,14 @@ coverage/
 *serviceAccount*.json
 *service-account*.json
 firebase-adminsdk*.json
+
+# 手元コピペで増える「一応とっておく」ファイル（レビュー対象外・実害ゼロだが
+# 探索コストだけ上げる）。過去分は git 側にある。
+*.backup
+*.backup-*
+*.backup.*
+*.current-broken
+*.fixed.jsx
+*.hotfix.jsx
+*.improved.js
+*.improved.jsx
