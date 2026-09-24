@@ -87,6 +87,9 @@ docker-compose.override.yml
 # docs/ も同様に、障害対応記録が大半のため allowlist 方式
 /docs/*
 !/docs/API_Reference_Final.md
+# 構造ガイドとクリーンアップ記録は「読んでほしい」側なので明示的に許可
+!/docs/ARCHITECTURE.md
+!/docs/CLEANUP-2026-09-24.md
 !/docs/FIREBASE_SSO_GUIDE.md
 
 # 入れ子の重複ディレクトリ（作業中に紛れ込んだもの）
