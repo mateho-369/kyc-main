@@ -199,6 +199,23 @@ Migration `up`/`down` in `server/migrations/` are wrapped in
 drop" errors and re-raises everything else, so a synced database can be brought
 up to date in one pass (the skips are logged as `[migrate:<name>] SKIP ...`).
 
+**Migrations now build a schema from zero.** `Users`, `performers`, `AuditLogs`
+and `Videos` were created only by `sequelize.sync()` — no migration created them
+— so `db:migrate` on an empty database stopped immediately:
+
+```
+== 20240101000001-add-firebase-integration-columns: migrating =======
+ERROR: Table 'safevideo.users' doesn't exist
+```
+
+`server/migrations/20240101000000-create-base-tables.js` creates those four from
+the model definitions (`Model.sync()` checks `tableExists` first, so it is a
+no-op where the table already exists), which means a fresh environment — including
+production, where auto-sync is off — can be provisioned with `npm run migrate`
+alone. If you add a model, add a migration:
+`server/tests/sso/migration-coverage.test.js` fails whenever a model table is not
+created by any migration.
+
 `server/config/config.js` (the file `sequelize-cli` loads) **is** committed and
 holds no credentials — it resolves `MYSQL_*` / `DB_*` in exactly the same order
 as `config/db.js`, so the CLI and the API cannot end up on different databases.

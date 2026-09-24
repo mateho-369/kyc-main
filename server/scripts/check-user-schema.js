@@ -43,6 +43,8 @@ const MAIN_TABLES = ['Users', 'FirebaseUsers'];
 
 const run = async () => {
   const { sequelize } = require('../config/db');
+  // 結果だけを見たいスクリプトなので、開発モードの SQL ログは黙らせる
+  sequelize.options.logging = false;
 
   try {
     await sequelize.authenticate();
@@ -87,9 +89,12 @@ const run = async () => {
   console.log('\n=== テーブル ===');
   const tableState = {};
   for (const table of MAIN_TABLES) {
+    // 注意: Windows の MySQL は lower_case_table_names=1 で運用されることが多く、
+    // information_schema には 'users' のように小文字で現れる。
+    // 大小を区別して比較すると「テーブルが無い」と誤報告することになる。
     const [rows] = await sequelize.query(
       `SELECT COUNT(*) AS c FROM information_schema.tables
-        WHERE table_schema = DATABASE() AND table_name = '${table}'`
+        WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER('${table}')`
     );
     tableState[table] = Number(rows[0].c) > 0;
     console.log(`  ${tableState[table] ? '[OK]  ' : '[FAIL]'} ${table}${tableState[table] ? '' : ' が存在しません'}`);
@@ -102,7 +107,7 @@ const run = async () => {
     const [columns] = await sequelize.query(
       `SELECT column_name AS name, data_type AS type, character_maximum_length AS len
          FROM information_schema.columns
-        WHERE table_schema = DATABASE() AND table_name = 'Users'`
+        WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER('Users')`
     );
     const present = new Map(columns.map((c) => [String(c.name).toLowerCase(), c]));
     REQUIRED_COLUMNS.forEach((column) => {
