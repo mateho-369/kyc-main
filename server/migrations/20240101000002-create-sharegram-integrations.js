@@ -2,6 +2,9 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '02-create-sharegram-integrations');
     await queryInterface.createTable('SharegramIntegrations', {
       id: {
         type: Sequelize.INTEGER,
@@ -87,6 +90,9 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '02-create-sharegram-integrations');
     await queryInterface.dropTable('SharegramIntegrations');
   }
 };

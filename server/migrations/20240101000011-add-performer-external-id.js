@@ -2,6 +2,9 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '11-add-performer-external-id');
     // Add external_id column to Performers table
     await queryInterface.addColumn('Performers', 'external_id', {
       type: Sequelize.STRING,
@@ -18,6 +21,9 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '11-add-performer-external-id');
     // Remove index
     await queryInterface.removeIndex('Performers', 'idx_performers_external_id');
     

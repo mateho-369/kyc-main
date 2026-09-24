@@ -182,6 +182,33 @@ dependencies, and have been removed by dependency cleanup:
 cd server && node -e "require('./server.js')" 2>&1 | grep "Cannot find module"
 ```
 
+**`db:migrate` and `sequelize.sync({ alter: true })` fight over the same
+schema.** In development the API syncs every model on boot
+(`server/config/db.js`), so the columns exist before any migration is recorded.
+An unguarded migration then stops on the first one:
+
+```
+== 20240101000001-add-firebase-integration-columns: migrating ==
+ERROR: Duplicate column name 'firebaseUid'
+```
+
+and because a failed migration is never written to `SequelizeMeta`, every later
+migration stays unapplied too — including the ones the running code depends on.
+Migration `up`/`down` in `server/migrations/` are wrapped in
+`server/utils/migrationGuard.js`, which skips only "already exists" / "can't
+drop" errors and re-raises everything else, so a synced database can be brought
+up to date in one pass (the skips are logged as `[migrate:<name>] SKIP ...`).
+
+`sequelize-cli` loads `server/config/config.js`, which is **not** in the
+repository — without it `db:migrate` fails on a fresh clone. Copy the template
+and confirm it points at the same database the API uses:
+
+```bash
+cd server
+cp config/config.example.js config/config.js   # then edit only if you must
+npx sequelize-cli db:migrate:status            # what is already recorded
+```
+
 ## Current limitations
 
 The deployment is deliberately simple, and the following are not in place:

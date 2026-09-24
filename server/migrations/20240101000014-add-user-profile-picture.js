@@ -7,6 +7,9 @@
  */
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '14-add-user-profile-picture');
     await queryInterface.addColumn('Users', 'profilePicture', {
       type: Sequelize.STRING(512),
       allowNull: true,
@@ -15,6 +18,9 @@ module.exports = {
   },
 
   down: async (queryInterface) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '14-add-user-profile-picture');
     await queryInterface.removeColumn('Users', 'profilePicture');
   }
 };

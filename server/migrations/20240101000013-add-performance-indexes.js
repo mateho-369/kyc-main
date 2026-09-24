@@ -2,6 +2,9 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const { makeSafe, isSkippable } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '13-add-performance-indexes');
     // 1. Performersテーブルのインデックス
     await queryInterface.addIndex('Performers', ['external_id'], {
       name: 'idx_performers_external_id',
@@ -135,38 +138,49 @@ module.exports = {
     // 6. テキスト検索用のGINインデックス（PostgreSQL専用）
     const dialect = queryInterface.sequelize.getDialect();
     if (dialect === 'postgres') {
-      // パフォーマー名の全文検索用
-      await queryInterface.sequelize.query(`
-        CREATE INDEX CONCURRENTLY idx_performers_fulltext_name 
-        ON "Performers" 
-        USING gin (
-          to_tsvector('simple', 
-            COALESCE("lastName", '') || ' ' || 
-            COALESCE("firstName", '') || ' ' || 
-            COALESCE("lastNameRoman", '') || ' ' || 
-            COALESCE("firstNameRoman", '')
-          )
+      try {
+        // パフォーマー名の全文検索用
+        await queryInterface.sequelize.query(`
+          CREATE INDEX CONCURRENTLY idx_performers_fulltext_name 
+          ON "Performers" 
+          USING gin (
+            to_tsvector('simple', 
+              COALESCE("lastName", '') || ' ' || 
+              COALESCE("firstName", '') || ' ' || 
+              COALESCE("lastNameRoman", '') || ' ' || 
+              COALESCE("firstNameRoman", '')
+            )
+          );
+        `);
+
+        // JSONフィールドのインデックス（documents, kycMetadata）
+        await queryInterface.sequelize.query(`
+          CREATE INDEX CONCURRENTLY idx_performers_documents_gin 
+          ON "Performers" 
+          USING gin (documents);
+        `);
+
+        await queryInterface.sequelize.query(`
+          CREATE INDEX CONCURRENTLY idx_performers_kyc_metadata_gin 
+          ON "Performers" 
+          USING gin ("kycMetadata");
+        `);
+      } catch (indexError) {
+        // raw SQL は makeSafe の対象外なので、ここで「既存」だけを許容する
+        if (!isSkippable(indexError)) throw indexError;
+        console.log(
+          `[migrate:13-add-performance-indexes] SKIP postgres GIN index \u2014 ${String(indexError.message).split(/[\r\n]+/)[0]}`
         );
-      `);
-
-      // JSONフィールドのインデックス（documents, kycMetadata）
-      await queryInterface.sequelize.query(`
-        CREATE INDEX CONCURRENTLY idx_performers_documents_gin 
-        ON "Performers" 
-        USING gin (documents);
-      `);
-
-      await queryInterface.sequelize.query(`
-        CREATE INDEX CONCURRENTLY idx_performers_kyc_metadata_gin 
-        ON "Performers" 
-        USING gin ("kycMetadata");
-      `);
+      }
     }
 
     console.log('パフォーマンス最適化インデックスの追加が完了しました');
   },
 
   down: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '13-add-performance-indexes');
     // インデックスの削除（逆順）
     const dialect = queryInterface.sequelize.getDialect();
     
