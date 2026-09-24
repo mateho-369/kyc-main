@@ -93,7 +93,7 @@ seeders exist; both are idempotent, and `npm run seed` runs them in order
 
 | seeder | what it does | needs env? |
 | --- | --- | --- |
-| `0001-seed-dev-accounts` | creates a **normal user** and an **admin** you can log in as on a dev DB | no (dev defaults) |
+| `0001-seed-accounts` | creates a **normal user** and an **admin** you can log in with | no (defaults below) |
 | `0002-promote-sso-admin` | promotes *your real Sharegram account* to `admin` | `SEED_ADMIN_EMAIL` |
 
 ```bash
@@ -106,9 +106,13 @@ npm run seed:undo                   # down() both seeders
 The dev accounts (only ever created outside production):
 
 ```
-dev.user@example.com   /  DevUser@12345    role=user
-dev.admin@example.com  /  DevAdmin@12345   role=admin
+user@example.com   /  user123    role=user
+admin@example.com  /  admin123   role=admin
 ```
+
+These are deliberately weak and easy to type. What keeps them from becoming an
+incident is that the seeder refuses to run in production at all (below), not the
+password strength — so do not run this against a shared database.
 
 Override any of it in `server/.env` — `SEED_USER_EMAIL`, `SEED_USER_PASSWORD`,
 `SEED_USER_NAME`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME`,
@@ -120,9 +124,9 @@ Override any of it in `server/.env` — `SEED_USER_EMAIL`, `SEED_USER_PASSWORD`,
   is rejected before MySQL can answer with `Data truncated`. (`manager` and `superadmin`
   do **not** exist in this column even though some frontend code mentions `superadmin`.)
 - An existing row is never re-passworded: the seed only aligns `role`, and says so.
-- Created rows are named `… (dev seed)`; `down()` deletes **only** rows still carrying
-  that marker with the expected role and no `firebaseUid` / `sharegramUserId` — so a
-  row that has since been linked to Sharegram, or renamed by a human, survives undo.
+- `down()` (via `npm run seed:undo`) only **reports** what it could delete; nothing is
+  destroyed until you set `SEED_UNDO_DELETE=true`, and a row carrying `firebaseUid` or
+  `sharegramUserId` is never deleted even then — undo cannot remove a real SSO identity.
 - `SEED_ADMIN_EMAIL` unset (or without an `@`) makes the second seeder a clean no-op.
 - A Sharegram SSO sign-in still wins over all of this: `getOrCreateUserFromFirebase`
   matches by email, so `SEED_ADMIN_EMAIL=makara@gmail.com` promotes the row SSO uses and

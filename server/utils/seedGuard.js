@@ -16,10 +16,6 @@
 /** Users.role の ENUM。これ以外を書くと MySQL は 1265 (Data truncated) を返す。 */
 const ROLES = ['admin', 'user'];
 
-/** シードで作る/触るアカウントに付ける目印。down() で「自分たちが作った物」を
- *  判定するのに使う（実在アカウントを消さないため）。 */
-const SEED_MARKER = 'dev seed';
-
 const isProduction = () => String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 
 /** SEED_ALLOW_INSECURE=true のときだけ本番でも通す（事故り方の指定）。 */
@@ -56,7 +52,7 @@ function normalizeEmail(value) {
 }
 
 /** パスワード: 未設定なら渡された既定値を使い、短すぎる物は拒否する（bcrypt 前に潰す）。 */
-function passwordOr(fallback, min = 8) {
+function passwordOr(fallback, min = 6) {
   const pw = String(fallback || '').trim();
   if (pw.length < min) {
     throw new Error(
@@ -79,20 +75,12 @@ function assertRole(role) {
   return value;
 }
 
-/** 表示名にシード印を必ず残す（down() と人手の判別のため）。 */
-function seedName(name, fallbackLocalPart) {
-  const base = String(name || '').trim() || fallbackLocalPart;
-  return base.includes(SEED_MARKER) ? base : `${base} (${SEED_MARKER})`;
-}
-
 module.exports = {
   ROLES,
-  SEED_MARKER,
   assertRole,
   assertSeedAllowed,
   dbDisabled,
   isProduction,
   normalizeEmail,
-  passwordOr,
-  seedName
+  passwordOr
 };

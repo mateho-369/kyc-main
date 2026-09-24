@@ -145,7 +145,7 @@ const run = async () => {
       });
       if (!users.some((u) => u.role === 'admin')) {
         console.log('  [INFO] 管理者が1人もいません。npm run seed で足りる物を両方作れます:');
-        console.log('         ・開発用アカウント dev.user@example.com / dev.admin@example.com');
+        console.log('         ・テスト用アカウント user@example.com / admin@example.com');
         console.log('         ・Sharegram実アカウントの昇格: server/.env に SEED_ADMIN_EMAIL=<自分のemail>');
       }
     } catch (error) {
