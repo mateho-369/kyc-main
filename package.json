@@ -32,6 +32,7 @@
     "vitest": "^1.1.0"
   },
   "scripts": {
+    "env:setup": "node scripts/setup-env.js",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "vitest run",

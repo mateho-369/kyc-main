@@ -59,15 +59,15 @@ docs/           API reference and Firebase SSO guide
 npm install
 cd server && npm install && cd ..
 
-cp .env.example .env
-cp server/.env.auth.example server/.env
-# fill in the values described below
+npm run env:setup    # .env.example -> .env と server/.env.example -> server/.env を作成し、
+                     # JWT/セッション/暗号化キーを自動生成する（既存 .env は上書きしない）
+# 残りは人がやる: MYSQL_PASSWORD / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY
+# （実行時に表示される「要記入」の並びがそのままチェックリスト）
 
 npm start          # frontend dev server
 cd server && npm start   # API
 
-cd server && npm run migrate   # schema (migrations build it from zero)
-cd server && npm run seed      # optional: promote/create the admin (see Seeding)
+cd server && npm run db:setup  # migrate (schema from zero) + seed (accounts + demo data)
 ```
 
 ### Read this first
@@ -85,16 +85,15 @@ with a different database. A dev build prints a console warning when this is uns
 
 ### Seeding
 
-### Seeding
-
-After `npm run migrate` the database has the right *shape* but **zero users**. Two
-seeders exist; both are idempotent, and `npm run seed` runs them in order
+After `npm run migrate` the database has the right *shape* but **zero users**. Three
+seeders exist; all are idempotent, and `npm run seed` runs them in order
 (or `npm run db:setup`, which is `migrate && seed`):
 
 | seeder | what it does | needs env? |
 | --- | --- | --- |
 | `0001-seed-accounts` | creates a **normal user** and an **admin** you can log in with | no (defaults below) |
 | `0002-promote-sso-admin` | promotes *your real Sharegram account* to `admin` | `SEED_ADMIN_EMAIL` |
+| `0003-seed-demo-performers` | adds a few **performers** (and matching audit rows) to those accounts so the lists are not empty | no — skip with `SEED_DEMO_DATA=false` |
 
 ```bash
 cd server
@@ -120,7 +119,7 @@ Override any of it in `server/.env` — `SEED_USER_EMAIL`, `SEED_USER_PASSWORD`,
 
 - **`NODE_ENV=production` aborts** with an error naming `SEED_ALLOW_INSECURE`, rather
   than quietly creating `admin@example.com` on a real database. Passwords shorter than
-  8 characters are rejected before bcrypt, and a role outside the `ENUM('admin','user')`
+  6 characters are rejected before bcrypt, and a role outside the `ENUM('admin','user')`
   is rejected before MySQL can answer with `Data truncated`. (`manager` and `superadmin`
   do **not** exist in this column even though some frontend code mentions `superadmin`.)
 - An existing row is never re-passworded: the seed only aligns `role`, and says so.
@@ -131,6 +130,24 @@ Override any of it in `server/.env` — `SEED_USER_EMAIL`, `SEED_USER_PASSWORD`,
 - A Sharegram SSO sign-in still wins over all of this: `getOrCreateUserFromFirebase`
   matches by email, so `SEED_ADMIN_EMAIL=makara@gmail.com` promotes the row SSO uses and
   nothing else changes.
+
+### "I seeded, but the dashboard still shows nothing"
+
+That is usually not a seeding failure — it is a different table:
+
+- the performer list and detail pages read **`performers`**, and `GET /api/performers`
+  forces `userId = <your id>` for `role: 'user'`, so a brand-new account legitimately
+  owns zero rows and the table is empty by design;
+- the seeded accounts themselves are only listed on `/admin/users`, which needs an
+  **admin** login (and `REACT_APP_API_URL` pointing at your local API, or the request
+  goes to the dev proxy and you are looking at a different database);
+- `cd server && npm run check:schema` prints the newest rows of `Users` with their
+  roles — the fastest way to tell "not seeded" from "seeded, wrong page".
+
+`0003` exists so the first bullet stops being a problem during development. It leaves
+`documents` empty on purpose: a document entry with no file behind it renders a
+preview/download button that fails, which reads exactly like a broken feature. Upload
+through the UI when you need real files.
 
 Do not run `npm run db:reset` on a database you care about: it is
 `db:drop && db:create && migrate && seed`, i.e. it deletes the schema and every
