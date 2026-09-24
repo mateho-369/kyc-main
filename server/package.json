@@ -32,7 +32,8 @@
     "security:audit": "npm audit",
     "security:fix": "npm audit fix",
     "logs:clear": "rm -rf logs/*.log",
-    "diagnose:sso": "node scripts/diagnose-sso-token.js"
+    "diagnose:sso": "node scripts/diagnose-sso-token.js",
+    "check:schema": "node scripts/check-user-schema.js"
   },
   "keywords": [
     "kyc",
