@@ -40,7 +40,9 @@ const SSOPage = () => {
         const token = searchParams.get('token');
         const action = searchParams.get('action');
         const performerId = searchParams.get('performer_id');
-        const comeBackUrl = searchParams.get('come_back_url');
+        // Sharegram historically sent both spellings. Accept both so the SSO
+        // flow does not silently lose its return destination.
+        const comeBackUrl = searchParams.get('come_back_url') || searchParams.get('come_back');
 
         // デバッグ情報を保存
         setDebugInfo({

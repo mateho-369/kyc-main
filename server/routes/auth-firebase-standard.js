@@ -8,33 +8,12 @@ const { User } = require('../models');
 const { setAuthCookies } = require('../utils/auth');
 const tokenService = require('../services/tokenService');
 const { validateFirebaseClaims, sanitizeFirebaseRequest } = require('../middleware/firebase-validation');
-// Firebase無効時のダミーミドルウェア
-const authenticateFirebaseToken = (req, res, next) => {
-  if (process.env.DISABLE_FIREBASE === 'true') {
-    req.firebaseUser = {
-      uid: 'test-uid',
-      email: 'test@example.com',
-      name: 'Test User',
-      picture: null
-    };
-    return next();
-  }
-  
-  try {
-    const { authenticateFirebaseToken: realAuth } = require('../middleware/firebaseAuth');
-    return realAuth(req, res, next);
-  } catch (error) {
-    console.error('Firebase Auth middleware error:', error);
-    // フォールバック：テストユーザー
-    req.firebaseUser = {
-      uid: 'test-uid-fallback',
-      email: 'test@example.com',
-      name: 'Test User',
-      picture: null
-    };
-    return next();
-  }
-};
+const { authenticateFirebase } = require('../middleware/firebaseAuth');
+
+// Important: never fall back to a shared "Test User" for a real SSO request.
+// The old code imported a non-existent authenticateFirebaseToken export, caught
+// that error, and authenticated every Sharegram account as test@example.com.
+const authenticateFirebaseToken = authenticateFirebase({ required: true });
 
 /**
  * Firebase標準SSO実装
@@ -43,17 +22,39 @@ const authenticateFirebaseToken = (req, res, next) => {
 router.post('/firebase-session', authenticateFirebaseToken, async (req, res) => {
   try {
     // authenticateFirebaseTokenミドルウェアで検証済みのユーザー情報
-    const { uid, email, name, picture } = req.firebaseUser;
+    // firebaseAuth places the verified Firebase identity on req.user and the
+    // complete verified claims on req.firebaseToken. Do not use client data.
+    const identity = req.user || {};
+    const claims = req.firebaseToken || {};
+    const uid = claims.uid || identity.firebaseUid || identity.uid;
+    const email = claims.email || identity.email;
+    // Firebase ID tokens do not always include displayName. Read the
+    // authoritative Firebase Auth profile as well; Sharegram should set this
+    // when it creates/updates the account.
+    let firebaseProfile = null;
+    try {
+      firebaseProfile = await admin.auth().getUser(uid);
+    } catch (profileError) {
+      console.warn('Could not load Firebase profile:', profileError.message);
+    }
+    const name = firebaseProfile?.displayName || claims.account_name || claims.accountName || claims.name || claims.displayName || identity.name || email?.split('@')[0];
+    const picture = firebaseProfile?.photoURL || claims.picture || claims.photoURL || null;
+
+    if (!uid || !email) {
+      return res.status(401).json({ success: false, error: 'Firebase token has no user identity' });
+    }
     
-    // ローカルユーザーを検索または作成
-    let user = await User.findOne({ where: { email } });
+    // Search by Firebase UID first, then email. This prevents an account from
+    // being accidentally attached to whichever local user happens to be first.
+    let user = await User.findOne({ where: { firebaseUid: uid } });
+    if (!user) user = await User.findOne({ where: { email } });
     
     if (!user) {
       // 新規ユーザー作成
       user = await User.create({
         email,
-        name: name || email.split('@')[0],
-        profilePicture: picture || null,
+        name,
+        profilePicture: picture,
         firebaseUid: uid,
         emailVerified: true,
         role: 'user',
@@ -69,7 +70,9 @@ router.post('/firebase-session', authenticateFirebaseToken, async (req, res) => 
         lastLoginAt: new Date(),
         firebaseUid: uid,
         profilePicture: picture || user.profilePicture,
-        name: name || user.name
+        // Firebase password tokens often contain no display name. Preserve an
+        // existing name; otherwise use the stable email local-part fallback.
+        name: name || user.name || email.split('@')[0]
       });
       
       console.log('✅ 既存ユーザー更新:', user.id);
