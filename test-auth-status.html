@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>認証状態テスト</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-8 bg-gray-100">
+    <div class="max-w-2xl mx-auto bg-white rounded-lg shadow p-6">
+        <h1 class="text-2xl font-bold mb-4">認証状態テスト</h1>
+        
+        <div class="space-y-4">
+            <button onclick="checkAuth()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                認証状態を確認
+            </button>
+            
+            <button onclick="getPerformer()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                出演者情報を取得 (ID: 1755606755946)
+            </button>
+            
+            <div id="result" class="mt-4 p-4 bg-gray-100 rounded hidden">
+                <h2 class="font-bold mb-2">結果:</h2>
+                <pre id="resultContent" class="whitespace-pre-wrap"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const showResult = (content) => {
+            document.getElementById('result').classList.remove('hidden');
+            document.getElementById('resultContent').textContent = content;
+        };
+
+        async function checkAuth() {
+            try {
+                // 1. 認証状態確認
+                const authResponse = await fetch('https://stg.id-manager.com/api/auth/me', {
+                    credentials: 'include'
+                });
+                
+                let result = `認証状態: ${authResponse.status} ${authResponse.statusText}\n`;
+                
+                if (authResponse.ok) {
+                    const authData = await authResponse.json();
+                    result += `ユーザー情報: ${JSON.stringify(authData, null, 2)}\n`;
+                } else {
+                    result += `認証エラー\n`;
+                }
+                
+                // 2. セッション確認
+                const sessionResponse = await fetch('https://stg.id-manager.com/api/auth/session', {
+                    credentials: 'include'
+                });
+                
+                result += `\nセッション状態: ${sessionResponse.status} ${sessionResponse.statusText}\n`;
+                
+                if (sessionResponse.ok) {
+                    const sessionData = await sessionResponse.json();
+                    result += `セッション情報: ${JSON.stringify(sessionData, null, 2)}`;
+                }
+                
+                showResult(result);
+            } catch (error) {
+                showResult(`エラー: ${error.message}`);
+            }
+        }
+        
+        async function getPerformer() {
+            try {
+                const response = await fetch('https://stg.id-manager.com/api/performers/1755606755946', {
+                    credentials: 'include'
+                });
+                
+                let result = `出演者API応答: ${response.status} ${response.statusText}\n\n`;
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    result += JSON.stringify(data, null, 2);
+                } else {
+                    const errorText = await response.text();
+                    result += `エラー内容: ${errorText}`;
+                }
+                
+                showResult(result);
+            } catch (error) {
+                showResult(`エラー: ${error.message}`);
+            }
+        }
+    </script>
+</body>
+</html>

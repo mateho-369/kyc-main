@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deployment Verification Test</title>
+</head>
+<body>
+    <h1>Deployment Verification Test</h1>
+    <div id="test-results"></div>
+    
+    <script>
+        const results = document.getElementById('test-results');
+        
+        // Test 1: Check if site loads
+        fetch('https://stg.id-manager.com/')
+            .then(response => {
+                results.innerHTML += `<p>✅ Site Status: ${response.status} ${response.statusText}</p>`;
+                return response.text();
+            })
+            .then(html => {
+                results.innerHTML += `<p>✅ HTML Content: ${html.length} characters loaded</p>`;
+                
+                // Check for key elements
+                if (html.includes('SharegramVideo')) {
+                    results.innerHTML += `<p>✅ Title Check: SharegramVideo found</p>`;
+                }
+                if (html.includes('main.c4a1cec9.js')) {
+                    results.innerHTML += `<p>✅ JS Bundle: main.c4a1cec9.js referenced</p>`;
+                }
+                if (html.includes('root')) {
+                    results.innerHTML += `<p>✅ React Root: div#root found</p>`;
+                }
+            })
+            .catch(error => {
+                results.innerHTML += `<p>❌ Error: ${error.message}</p>`;
+            });
+        
+        // Test 2: Check JavaScript bundle
+        fetch('https://stg.id-manager.com/static/js/main.c4a1cec9.js')
+            .then(response => {
+                results.innerHTML += `<p>✅ JS Bundle Status: ${response.status} ${response.statusText}</p>`;
+                results.innerHTML += `<p>✅ JS Bundle Size: ${response.headers.get('content-length')} bytes</p>`;
+            })
+            .catch(error => {
+                results.innerHTML += `<p>❌ JS Bundle Error: ${error.message}</p>`;
+            });
+        
+        // Test 3: Check CSS
+        fetch('https://stg.id-manager.com/static/css/main.ff2c512b.css')
+            .then(response => {
+                results.innerHTML += `<p>✅ CSS Status: ${response.status} ${response.statusText}</p>`;
+            })
+            .catch(error => {
+                results.innerHTML += `<p>❌ CSS Error: ${error.message}</p>`;
+            });
+    </script>
+</body>
+</html>

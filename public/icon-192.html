@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Icon Generator</title>
+</head>
+<body>
+    <canvas id="canvas" width="192" height="192"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Background with rounded corners
+        const radius = 19.2; // 10% of size
+        ctx.fillStyle = '#3498db';
+        ctx.beginPath();
+        ctx.moveTo(radius, 0);
+        ctx.lineTo(192 - radius, 0);
+        ctx.quadraticCurveTo(192, 0, 192, radius);
+        ctx.lineTo(192, 192 - radius);
+        ctx.quadraticCurveTo(192, 192, 192 - radius, 192);
+        ctx.lineTo(radius, 192);
+        ctx.quadraticCurveTo(0, 192, 0, 192 - radius);
+        ctx.lineTo(0, radius);
+        ctx.quadraticCurveTo(0, 0, radius, 0);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 67px Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('ID', 96, 96);
+        
+        // Convert to PNG
+        canvas.toBlob(function(blob) {
+            const a = document.createElement('a');
+            a.download = 'icon-192.png';
+            a.href = URL.createObjectURL(blob);
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            // Show the icon
+            const img = document.createElement('img');
+            img.src = canvas.toDataURL();
+            img.style.border = '1px solid #ccc';
+            img.style.margin = '20px';
+            document.body.appendChild(img);
+            
+            // Instructions
+            const p = document.createElement('p');
+            p.textContent = 'Icon generated! If download didn\'t start automatically, right-click the image and save as icon-192.png';
+            document.body.appendChild(p);
+        });
+    </script>
+</body>
+</html>

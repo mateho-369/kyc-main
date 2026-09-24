@@ -1,0 +1,140 @@
+groups:
+  - name: safevideo.critical
+    rules:
+      # Application availability
+      - alert: SafeVideoDown
+        expr: up{job=~"safevideo-.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: safevideo
+        annotations:
+          summary: "SafeVideo instance {{ $labels.instance }} is down"
+          description: "SafeVideo instance {{ $labels.instance }} has been down for more than 1 minute."
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          service: safevideo
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.instance }}"
+
+      # Database connectivity
+      - alert: DatabaseDown
+        expr: up{job=~"mysql-.*"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "Database instance {{ $labels.instance }} is down"
+          description: "MySQL instance {{ $labels.instance }} has been unreachable for more than 30 seconds."
+
+      # Redis connectivity
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: "Redis instance is down"
+          description: "Redis instance has been unreachable for more than 1 minute."
+
+  - name: safevideo.warning
+    rules:
+      # High response time
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: safevideo
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.instance }}"
+
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: infrastructure
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: infrastructure
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+
+      # High disk usage
+      - alert: HighDiskUsage
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: infrastructure
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }} for filesystem {{ $labels.mountpoint }}"
+
+  - name: safevideo.security
+    rules:
+      # Multiple failed login attempts
+      - alert: MultipleFailedLogins
+        expr: increase(failed_login_attempts_total[5m]) > 10
+        for: 1m
+        labels:
+          severity: warning
+          service: security
+        annotations:
+          summary: "Multiple failed login attempts detected"
+          description: "{{ $value }} failed login attempts in the last 5 minutes from {{ $labels.source_ip }}"
+
+      # Suspicious activity
+      - alert: SuspiciousActivity
+        expr: increase(security_events_total{event_type="suspicious"}[5m]) > 5
+        for: 1m
+        labels:
+          severity: warning
+          service: security
+        annotations:
+          summary: "Suspicious activity detected"
+          description: "{{ $value }} suspicious events detected in the last 5 minutes"
+
+  - name: safevideo.business
+    rules:
+      # Low upload success rate
+      - alert: LowUploadSuccessRate
+        expr: rate(document_uploads_total{status="success"}[5m]) / rate(document_uploads_total[5m]) < 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: business
+        annotations:
+          summary: "Low document upload success rate"
+          description: "Upload success rate is {{ $value | humanizePercentage }}"
+
+      # High verification queue
+      - alert: HighVerificationQueue
+        expr: verification_queue_size > 100
+        for: 10m
+        labels:
+          severity: warning
+          service: business
+        annotations:
+          summary: "High verification queue size"
+          description: "Verification queue has {{ $value }} pending items"

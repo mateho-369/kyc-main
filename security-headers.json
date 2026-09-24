@@ -1,0 +1,50 @@
+{
+  "headers": {
+    "Content-Security-Policy": {
+      "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://apis.google.com https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://stg.id-manager.com https://api.safevideo-kyc.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://www.google-analytics.com https://*.sentry.io wss://stg.id-manager.com wss://api.safevideo-kyc.com; frame-src 'self' https://safevideo-kyc.firebaseapp.com https://accounts.google.com; object-src 'none'; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests;",
+      "description": "Content Security Policy to prevent XSS and other injection attacks"
+    },
+    "Strict-Transport-Security": {
+      "value": "max-age=31536000; includeSubDomains; preload",
+      "description": "Enforce HTTPS for 1 year, including subdomains"
+    },
+    "X-Frame-Options": {
+      "value": "SAMEORIGIN",
+      "description": "Prevent clickjacking by disallowing framing except from same origin"
+    },
+    "X-Content-Type-Options": {
+      "value": "nosniff",
+      "description": "Prevent MIME type sniffing"
+    },
+    "X-XSS-Protection": {
+      "value": "1; mode=block",
+      "description": "Enable XSS filter in older browsers"
+    },
+    "Referrer-Policy": {
+      "value": "strict-origin-when-cross-origin",
+      "description": "Send full referrer to same origin, only origin to others"
+    },
+    "Permissions-Policy": {
+      "value": "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
+      "description": "Disable unused browser features"
+    },
+    "Cross-Origin-Embedder-Policy": {
+      "value": "require-corp",
+      "description": "Require explicit permission for cross-origin resources"
+    },
+    "Cross-Origin-Opener-Policy": {
+      "value": "same-origin",
+      "description": "Isolate browsing context to same origin"
+    },
+    "Cross-Origin-Resource-Policy": {
+      "value": "same-origin",
+      "description": "Restrict resource access to same origin"
+    }
+  },
+  "nginx_config": {
+    "example": "# Nginx configuration for security headers\n\nadd_header Content-Security-Policy \"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://apis.google.com https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://stg.id-manager.com https://api.safevideo-kyc.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://www.google-analytics.com https://*.sentry.io wss://stg.id-manager.com wss://api.safevideo-kyc.com; frame-src 'self' https://safevideo-kyc.firebaseapp.com https://accounts.google.com; object-src 'none'; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests;\" always;\n\nadd_header Strict-Transport-Security \"max-age=31536000; includeSubDomains; preload\" always;\nadd_header X-Frame-Options \"SAMEORIGIN\" always;\nadd_header X-Content-Type-Options \"nosniff\" always;\nadd_header X-XSS-Protection \"1; mode=block\" always;\nadd_header Referrer-Policy \"strict-origin-when-cross-origin\" always;\nadd_header Permissions-Policy \"accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()\" always;\nadd_header Cross-Origin-Embedder-Policy \"require-corp\" always;\nadd_header Cross-Origin-Opener-Policy \"same-origin\" always;\nadd_header Cross-Origin-Resource-Policy \"same-origin\" always;"
+  },
+  "apache_config": {
+    "example": "# Apache configuration for security headers\n\nHeader always set Content-Security-Policy \"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://apis.google.com https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://stg.id-manager.com https://api.safevideo-kyc.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://www.google-analytics.com https://*.sentry.io wss://stg.id-manager.com wss://api.safevideo-kyc.com; frame-src 'self' https://safevideo-kyc.firebaseapp.com https://accounts.google.com; object-src 'none'; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests;\"\n\nHeader always set Strict-Transport-Security \"max-age=31536000; includeSubDomains; preload\"\nHeader always set X-Frame-Options \"SAMEORIGIN\"\nHeader always set X-Content-Type-Options \"nosniff\"\nHeader always set X-XSS-Protection \"1; mode=block\"\nHeader always set Referrer-Policy \"strict-origin-when-cross-origin\"\nHeader always set Permissions-Policy \"accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()\"\nHeader always set Cross-Origin-Embedder-Policy \"require-corp\"\nHeader always set Cross-Origin-Opener-Policy \"same-origin\"\nHeader always set Cross-Origin-Resource-Policy \"same-origin\""
+  }
+}

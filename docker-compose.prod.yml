@@ -1,0 +1,414 @@
+version: '3.8'
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+    labels: "service"
+
+services:
+  nginx:
+    image: nginx:1.23-alpine
+    container_name: safevideo-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-cache:/var/cache/nginx
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - frontend
+      - monitoring
+    depends_on:
+      client:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+      restart_policy:
+        condition: unless-stopped
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  client:
+    image: safevideo/client:${VERSION:-latest}
+    container_name: safevideo-client
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+      cache_from:
+        - safevideo/client:latest
+        - safevideo/client:cache
+      args:
+        - NODE_ENV=production
+        - REACT_APP_API_URL=${REACT_APP_API_URL}
+    environment:
+      - NODE_ENV=production
+      - REACT_APP_VERSION=${VERSION:-latest}
+    volumes:
+      - ./uploads:/usr/share/nginx/html/uploads:ro
+    networks:
+      - frontend
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+      restart_policy:
+        condition: unless-stopped
+        delay: 5s
+        max_attempts: 3
+
+  server:
+    image: safevideo/server:${VERSION:-latest}
+    container_name: safevideo-server
+    build:
+      context: ./server
+      dockerfile: Dockerfile.optimized
+      cache_from:
+        - safevideo/server:latest
+        - safevideo/server:cache
+      args:
+        - NODE_ENV=production
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD_FILE=/run/secrets/db_password
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - SESSION_SECRET_FILE=/run/secrets/session_secret
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD_FILE=/run/secrets/redis_password
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NODE_OPTIONS=--max-old-space-size=512
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+      - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY}
+      - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL}
+    secrets:
+      - db_password
+      - jwt_secret
+      - session_secret
+      - redis_password
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs/app:/app/logs
+    networks:
+      - frontend
+      - backend
+      - database
+      - monitoring
+    healthcheck:
+      test: ["CMD", "node", "/app/scripts/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: unless-stopped
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    container_name: safevideo-mysql
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=100
+      - --connect_timeout=10
+      - --innodb_buffer_pool_size=256M
+      - --innodb_log_file_size=64M
+      - --slow_query_log=1
+      - --long_query_time=2
+    environment:
+      - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/mysql_root_password
+      - MYSQL_DATABASE=${DB_NAME}
+      - MYSQL_USER=${DB_USER}
+      - MYSQL_PASSWORD_FILE=/run/secrets/db_password
+      - TZ=Asia/Tokyo
+    secrets:
+      - mysql_root_password
+      - db_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/prod/mysql/conf.d:/etc/mysql/conf.d:ro
+      - ./logs/mysql:/var/log/mysql
+      - ./backups/mysql:/backup
+    networks:
+      - database
+      - monitoring
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+      restart_policy:
+        condition: unless-stopped
+        delay: 30s
+        max_attempts: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: safevideo-redis
+    command:
+      - redis-server
+      - --appendonly yes
+      - --appendfsync everysec
+      - --maxmemory 256mb
+      - --maxmemory-policy allkeys-lru
+      - --requirepass ${REDIS_PASSWORD}
+      - --tcp-keepalive 60
+      - --timeout 300
+    environment:
+      - REDIS_PASSWORD_FILE=/run/secrets/redis_password
+    secrets:
+      - redis_password
+    volumes:
+      - redis-data:/data
+      - ./docker/prod/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - backend
+      - monitoring
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+      restart_policy:
+        condition: unless-stopped
+        delay: 10s
+        max_attempts: 3
+
+  # Monitoring Services
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: safevideo-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    networks:
+      - monitoring
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: safevideo-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/grafana_password
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+      - GF_SERVER_ROOT_URL=https://${DOMAIN}/grafana
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+    secrets:
+      - grafana_password
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - monitoring
+      - frontend
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: unless-stopped
+    depends_on:
+      - prometheus
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: safevideo-node-exporter
+    command:
+      - '--path.rootfs=/host'
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - monitoring
+    ports:
+      - "9100:9100"
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+      restart_policy:
+        condition: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: safevideo-cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    networks:
+      - monitoring
+    ports:
+      - "8080:8080"
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+      restart_policy:
+        condition: unless-stopped
+
+networks:
+  frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  backend:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.20.1.0/24
+  database:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.20.2.0/24
+  monitoring:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.3.0/24
+
+volumes:
+  mysql-data:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  nginx-cache:
+    driver: local
+
+secrets:
+  mysql_root_password:
+    file: ./secrets/mysql_root_password.txt
+  db_password:
+    file: ./secrets/db_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  session_secret:
+    file: ./secrets/session_secret.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  grafana_password:
+    file: ./secrets/grafana_password.txt

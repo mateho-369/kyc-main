@@ -1,0 +1,235 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 認証されたユーザーのみアクセス可能
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // ユーザーIDが一致するかチェック
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // 管理者権限を持つユーザーかチェック（複数レベル対応）
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.admin == true ||
+         request.auth.token.role == 'admin' ||
+         request.auth.token.role == 'super_admin');
+    }
+    
+    // スーパー管理者権限を持つユーザーかチェック
+    function isSuperAdmin() {
+      return isAuthenticated() && 
+        request.auth.token.role == 'super_admin';
+    }
+    
+    // モデレーター権限を持つユーザーかチェック
+    function isModerator() {
+      return isAuthenticated() && 
+        (request.auth.token.role == 'moderator' || isAdmin());
+    }
+    
+    // KYC承認済みのパフォーマーかチェック
+    function isApprovedPerformer() {
+      return isAuthenticated() && 
+        request.auth.token.role == 'performer' && 
+        request.auth.token.kycApproved == true &&
+        request.auth.token.accountStatus == 'active';
+    }
+    
+    // アカウントがアクティブかチェック
+    function isActiveAccount() {
+      return isAuthenticated() && 
+        request.auth.token.accountStatus != 'suspended' &&
+        request.auth.token.accountStatus != 'banned';
+    }
+    
+    // IP制限チェック（本番環境用）
+    function isAllowedIP() {
+      return request.auth.token.allowedIPs == null || 
+             request.auth.token.allowedIPs.hasAll([request.resource.data.lastIP]);
+    }
+    
+    // レート制限チェック（1時間あたりの書き込み回数）
+    function checkRateLimit(collection, limit) {
+      return get(/databases/$(database)/documents/rateLimits/$(request.auth.uid)/$(collection)).data.count < limit ||
+             !exists(/databases/$(database)/documents/rateLimits/$(request.auth.uid)/$(collection));
+    }
+    
+    // データ検証関数
+    function validateUserData() {
+      return request.resource.data.keys().hasAll(['email', 'createdAt', 'updatedAt']) &&
+             request.resource.data.email is string &&
+             request.resource.data.email.matches('^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$') &&
+             request.resource.data.createdAt is timestamp &&
+             request.resource.data.updatedAt is timestamp;
+    }
+    
+    function validatePerformerData() {
+      return request.resource.data.keys().hasAll(['name', 'email', 'status', 'kycStatus']) &&
+             request.resource.data.name is string &&
+             request.resource.data.name.size() >= 2 &&
+             request.resource.data.name.size() <= 100 &&
+             request.resource.data.status in ['pending', 'active', 'suspended', 'banned'] &&
+             request.resource.data.kycStatus in ['pending', 'submitted', 'approved', 'rejected'];
+    }
+    
+    // ユーザープロフィール
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin() || isModerator();
+      allow create: if isAuthenticated() && 
+                       userId == request.auth.uid &&
+                       validateUserData() &&
+                       checkRateLimit('users', 5);
+      allow update: if (isOwner(userId) || isAdmin()) && 
+                       isActiveAccount() &&
+                       validateUserData() &&
+                       checkRateLimit('users', 20);
+      allow delete: if isSuperAdmin();
+    }
+    
+    // パフォーマー情報
+    match /performers/{performerId} {
+      allow read: if isAuthenticated() && isActiveAccount();
+      allow create: if isAdmin() && 
+                       validatePerformerData() &&
+                       checkRateLimit('performers', 10);
+      allow update: if (isOwner(performerId) || isAdmin()) && 
+                       isActiveAccount() &&
+                       validatePerformerData() &&
+                       checkRateLimit('performers', 30);
+      allow delete: if isSuperAdmin();
+      
+      // パフォーマーの公開統計情報
+      match /stats/{statId} {
+        allow read: if isAuthenticated();
+        allow write: if false; // システムのみが更新
+      }
+    }
+    
+    // KYCリクエスト
+    match /kycRequests/{requestId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin() || isModerator();
+      allow create: if isAuthenticated() && 
+                       request.auth.uid == request.resource.data.userId &&
+                       request.resource.data.keys().hasAll(['userId', 'type', 'status']) &&
+                       request.resource.data.status == 'pending' &&
+                       checkRateLimit('kycRequests', 3);
+      allow update: if isAdmin() || isModerator();
+      allow delete: if isSuperAdmin();
+      
+      // KYC検証履歴
+      match /history/{historyId} {
+        allow read: if isOwner(get(/databases/$(database)/documents/kycRequests/$(requestId)).data.userId) || isAdmin();
+        allow write: if false; // システムのみが更新
+      }
+    }
+    
+    // KYCドキュメント
+    match /kycDocuments/{documentId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin() || isModerator();
+      allow create: if isAuthenticated() && 
+                       request.auth.uid == request.resource.data.userId &&
+                       request.resource.data.keys().hasAll(['userId', 'type', 'status', 'uploadedAt']) &&
+                       request.resource.data.type in ['passport', 'idCard', 'driverLicense', 'selfie', 'proofOfAddress'] &&
+                       checkRateLimit('kycDocuments', 10);
+      allow update: if (isOwner(resource.data.userId) && 
+                        resource.data.status == 'pending') || 
+                       isAdmin() || 
+                       isModerator();
+      allow delete: if isSuperAdmin();
+    }
+    
+    // 動画コンテンツ
+    match /videos/{videoId} {
+      allow read: if isAuthenticated() && isActiveAccount();
+      allow create: if isApprovedPerformer() && 
+                       request.auth.uid == request.resource.data.performerId &&
+                       request.resource.data.keys().hasAll(['performerId', 'title', 'status']) &&
+                       request.resource.data.status == 'draft' &&
+                       checkRateLimit('videos', 50);
+      allow update: if (isOwner(resource.data.performerId) || isAdmin() || isModerator()) &&
+                       isActiveAccount();
+      allow delete: if (isOwner(resource.data.performerId) && resource.data.status == 'draft') || 
+                       isAdmin();
+      
+      // 動画メタデータ
+      match /metadata/{metaId} {
+        allow read: if isAuthenticated();
+        allow write: if isOwner(get(/databases/$(database)/documents/videos/$(videoId)).data.performerId) || isAdmin();
+      }
+    }
+    
+    // 監査ログ（読み取り専用）
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false; // システムのみが書き込み可能
+      
+      // 詳細ログ（スーパー管理者のみ）
+      match /details/{detailId} {
+        allow read: if isSuperAdmin();
+        allow write: if false;
+      }
+    }
+    
+    // Sharegram統合データ
+    match /sharegramIntegrations/{integrationId} {
+      allow read: if isAdmin() || isModerator();
+      allow write: if isAdmin();
+      
+      // 同期ログ
+      match /syncLogs/{logId} {
+        allow read: if isAdmin();
+        allow write: if false; // システムのみ
+      }
+    }
+    
+    // システム設定（管理者のみ）
+    match /systemConfig/{configId} {
+      allow read: if isAdmin();
+      allow write: if isSuperAdmin();
+      
+      // 機密設定（スーパー管理者のみ）
+      match /sensitive/{sensitiveId} {
+        allow read: if isSuperAdmin();
+        allow write: if isSuperAdmin();
+      }
+    }
+    
+    // レート制限カウンター
+    match /rateLimits/{userId}/{collection} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if false; // システムのみが更新
+    }
+    
+    // セッション管理
+    match /sessions/{sessionId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isAuthenticated() && 
+                       request.auth.uid == request.resource.data.userId;
+      allow update: if isOwner(resource.data.userId);
+      allow delete: if isOwner(resource.data.userId) || isAdmin();
+    }
+    
+    // 通知設定
+    match /notifications/{userId}/settings/{settingId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) || isAdmin();
+    }
+    
+    // 通知履歴
+    match /notifications/{userId}/history/{notificationId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if false; // システムのみ
+      allow update: if isOwner(userId); // 既読フラグのみ更新可能
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+    
+    // デフォルト：すべて拒否
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

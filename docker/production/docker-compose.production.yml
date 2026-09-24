@@ -1,0 +1,718 @@
+version: '3.8'
+
+# Production-optimized Docker Compose for SafeVideo
+# Features: Auto-scaling, Enhanced monitoring, Blue-Green deployment support
+
+x-logging: &production-logging
+  driver: "json-file"
+  options:
+    max-size: "20m"
+    max-file: "5"
+    labels: "service,environment,version"
+
+x-resource-limits: &default-resources
+  deploy:
+    resources:
+      limits:
+        cpus: '2'
+        memory: 1G
+      reservations:
+        cpus: '0.5'
+        memory: 256M
+
+x-restart-policy: &default-restart
+  restart_policy:
+    condition: on-failure
+    delay: 10s
+    max_attempts: 5
+    window: 300s
+
+x-update-config: &default-update
+  update_config:
+    parallelism: 1
+    delay: 30s
+    failure_action: rollback
+    monitor: 60s
+    max_failure_ratio: 0.3
+    order: start-first
+
+x-rollback-config: &default-rollback
+  rollback_config:
+    parallelism: 1
+    delay: 30s
+    failure_action: pause
+    monitor: 60s
+    max_failure_ratio: 0.3
+    order: stop-first
+
+services:
+  # Load Balancer (HAProxy for Blue-Green deployment)
+  load-balancer:
+    image: haproxy:2.8-alpine
+    container_name: safevideo-lb
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8404:8404"  # HAProxy stats
+    volumes:
+      - ./docker/production/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./docker/production/haproxy/ssl:/etc/ssl/certs:ro
+    networks:
+      - frontend
+      - monitoring
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *production-logging
+
+  # Application Server - Blue Environment
+  server-blue:
+    image: safevideo/server:${VERSION:-latest}
+    environment:
+      - NODE_ENV=production
+      - DEPLOYMENT_ENVIRONMENT=blue
+      - PORT=5000
+      - DB_HOST=mysql-master
+      - DB_PORT=3306
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD_FILE=/run/secrets/db_password
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - ENCRYPTION_KEY_FILE=/run/secrets/encryption_key
+      - REDIS_HOST=redis-cluster
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD_FILE=/run/secrets/redis_password
+      - LOG_LEVEL=${LOG_LEVEL:-warn}
+      - METRICS_ENABLED=true
+      - TRACING_ENABLED=true
+      - NODE_OPTIONS=--max-old-space-size=768
+    secrets:
+      - db_password
+      - jwt_secret
+      - encryption_key
+      - redis_password
+    volumes:
+      - uploads-blue:/app/uploads
+      - logs-blue:/app/logs
+    networks:
+      - frontend
+      - backend
+      - database
+      - monitoring
+    deploy:
+      replicas: 3
+      placement:
+        constraints:
+          - node.labels.environment == production
+        preferences:
+          - spread: node.labels.az
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: pause
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: stop-first
+    healthcheck:
+      test: ["CMD", "node", "/app/scripts/healthcheck.js"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging: *production-logging
+
+  # Application Server - Green Environment (for Blue-Green deployment)
+  server-green:
+    image: safevideo/server:${VERSION:-latest}
+    environment:
+      - NODE_ENV=production
+      - DEPLOYMENT_ENVIRONMENT=green
+      - PORT=5000
+      - DB_HOST=mysql-master
+      - DB_PORT=3306
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD_FILE=/run/secrets/db_password
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - ENCRYPTION_KEY_FILE=/run/secrets/encryption_key
+      - REDIS_HOST=redis-cluster
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD_FILE=/run/secrets/redis_password
+      - LOG_LEVEL=${LOG_LEVEL:-warn}
+      - METRICS_ENABLED=true
+      - TRACING_ENABLED=true
+      - NODE_OPTIONS=--max-old-space-size=768
+    secrets:
+      - db_password
+      - jwt_secret
+      - encryption_key
+      - redis_password
+    volumes:
+      - uploads-green:/app/uploads
+      - logs-green:/app/logs
+    networks:
+      - frontend
+      - backend
+      - database
+      - monitoring
+    deploy:
+      replicas: 0  # Initially disabled
+      placement:
+        constraints:
+          - node.labels.environment == production
+        preferences:
+          - spread: node.labels.az
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: pause
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: stop-first
+    healthcheck:
+      test: ["CMD", "node", "/app/scripts/healthcheck.js"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging: *production-logging
+
+  # Client Application
+  client:
+    image: safevideo/client:${VERSION:-latest}
+    environment:
+      - NODE_ENV=production
+      - REACT_APP_VERSION=${VERSION:-latest}
+    volumes:
+      - uploads-shared:/usr/share/nginx/html/uploads:ro
+    networks:
+      - frontend
+      - monitoring
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.labels.environment == production
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging: *production-logging
+
+  # Database - Master
+  mysql-master:
+    image: mysql:8.0
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=200
+      - --innodb_buffer_pool_size=512M
+      - --innodb_log_file_size=128M
+      - --innodb_flush_log_at_trx_commit=2
+      - --sync_binlog=0
+      - --binlog_format=ROW
+      - --log-bin=mysql-bin
+      - --server-id=1
+      - --gtid_mode=ON
+      - --enforce_gtid_consistency=ON
+    environment:
+      - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/mysql_root_password
+      - MYSQL_DATABASE=${DB_NAME}
+      - MYSQL_USER=${DB_USER}
+      - MYSQL_PASSWORD_FILE=/run/secrets/db_password
+      - TZ=UTC
+    secrets:
+      - mysql_root_password
+      - db_password
+    volumes:
+      - mysql-master-data:/var/lib/mysql
+      - ./docker/production/mysql/conf.d:/etc/mysql/conf.d:ro
+      - ./docker/production/mysql/init:/docker-entrypoint-initdb.d:ro
+      - logs-mysql:/var/log/mysql
+      - backups-mysql:/backup
+    networks:
+      - database
+      - monitoring
+    deploy:
+      placement:
+        constraints:
+          - node.labels.database == master
+      resources:
+        limits:
+          cpus: '4'
+          memory: 2G
+        reservations:
+          cpus: '2'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging: *production-logging
+
+  # Database - Read Replica
+  mysql-replica:
+    image: mysql:8.0
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=100
+      - --innodb_buffer_pool_size=256M
+      - --read_only=1
+      - --super_read_only=1
+      - --relay_log=mysql-relay
+      - --log_slave_updates=1
+      - --gtid_mode=ON
+      - --enforce_gtid_consistency=ON
+    environment:
+      - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/mysql_root_password
+      - TZ=UTC
+    secrets:
+      - mysql_root_password
+    volumes:
+      - mysql-replica-data:/var/lib/mysql
+      - ./docker/production/mysql/replica.cnf:/etc/mysql/conf.d/replica.cnf:ro
+    networks:
+      - database
+      - monitoring
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.labels.database == replica
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging: *production-logging
+    depends_on:
+      - mysql-master
+
+  # Redis Cluster
+  redis-cluster:
+    image: redis:7-alpine
+    command:
+      - redis-server
+      - --appendonly yes
+      - --appendfsync everysec
+      - --maxmemory 512mb
+      - --maxmemory-policy allkeys-lru
+      - --requirepass ${REDIS_PASSWORD}
+      - --tcp-keepalive 60
+      - --timeout 300
+      - --cluster-enabled yes
+      - --cluster-config-file nodes.conf
+      - --cluster-node-timeout 5000
+    environment:
+      - REDIS_PASSWORD_FILE=/run/secrets/redis_password
+    secrets:
+      - redis_password
+    volumes:
+      - redis-cluster-data:/data
+      - ./docker/production/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - backend
+      - monitoring
+    deploy:
+      replicas: 3
+      placement:
+        constraints:
+          - node.labels.redis == cluster
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *production-logging
+
+  # Enhanced Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.size=10GB'
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    networks:
+      - monitoring
+    ports:
+      - "9090:9090"
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: *production-logging
+
+  # Grafana with Enhanced Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/grafana_password
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource,grafana-piechart-panel
+      - GF_SERVER_ROOT_URL=https://${DOMAIN}/grafana
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_SNAPSHOTS_EXTERNAL_ENABLED=false
+    secrets:
+      - grafana_password
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - monitoring
+      - frontend
+    ports:
+      - "3000:3000"
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: *production-logging
+    depends_on:
+      - prometheus
+
+  # Alertmanager for Production Alerts
+  alertmanager:
+    image: prom/alertmanager:latest
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=https://${DOMAIN}/alertmanager'
+      - '--cluster.listen-address=0.0.0.0:9094'
+      - '--cluster.peer=alertmanager:9094'
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - alertmanager-data:/alertmanager
+    networks:
+      - monitoring
+    ports:
+      - "9093:9093"
+    deploy:
+      replicas: 3
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: *production-logging
+
+  # Node Exporter for Host Metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    command:
+      - '--path.rootfs=/host'
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/var/lib/node_exporter/textfile_collector'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - node-exporter-textfile:/var/lib/node_exporter/textfile_collector
+    networks:
+      - monitoring
+    ports:
+      - "9100:9100"
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s
+    logging: *production-logging
+
+networks:
+  frontend:
+    driver: overlay
+    attachable: true
+    driver_opts:
+      encrypted: "true"
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+  backend:
+    driver: overlay
+    internal: true
+    driver_opts:
+      encrypted: "true"
+    ipam:
+      config:
+        - subnet: 172.20.1.0/24
+
+  database:
+    driver: overlay
+    internal: true
+    driver_opts:
+      encrypted: "true"
+    ipam:
+      config:
+        - subnet: 172.20.2.0/24
+
+  monitoring:
+    driver: overlay
+    driver_opts:
+      encrypted: "true"
+    ipam:
+      config:
+        - subnet: 172.20.3.0/24
+
+volumes:
+  # Application volumes with backup support
+  uploads-blue:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NFS_SERVER},rw,noatime
+      device: ":/exports/safevideo/uploads/blue"
+
+  uploads-green:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NFS_SERVER},rw,noatime
+      device: ":/exports/safevideo/uploads/green"
+
+  uploads-shared:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NFS_SERVER},ro,noatime
+      device: ":/exports/safevideo/uploads/shared"
+
+  # Database volumes with high-performance storage
+  mysql-master-data:
+    driver: local
+    driver_opts:
+      type: ext4
+      device: /dev/sdb1
+
+  mysql-replica-data:
+    driver: local
+
+  # Redis cluster data
+  redis-cluster-data:
+    driver: local
+
+  # Monitoring data
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  alertmanager-data:
+    driver: local
+  node-exporter-textfile:
+    driver: local
+
+  # Log volumes
+  logs-blue:
+    driver: local
+  logs-green:
+    driver: local
+  logs-mysql:
+    driver: local
+
+  # Backup volumes
+  backups-mysql:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${BACKUP_SERVER},rw
+      device: ":/exports/backups/mysql"
+
+secrets:
+  mysql_root_password:
+    file: ./secrets/mysql_root_password.txt
+  db_password:
+    file: ./secrets/db_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  encryption_key:
+    file: ./secrets/encryption_key.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  grafana_password:
+    file: ./secrets/grafana_password.txt
+
+configs:
+  mysql_config:
+    file: ./docker/production/mysql/my.cnf
+  redis_config:
+    file: ./docker/production/redis/redis.conf
+  nginx_config:
+    file: ./docker/production/nginx/nginx.conf

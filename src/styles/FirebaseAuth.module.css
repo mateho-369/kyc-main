@@ -1,0 +1,291 @@
+/* Firebase認証UIのレスポンシブスタイル */
+
+/* アニメーション定義 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ユーティリティクラス */
+.animateFadeIn {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.animateSlideIn {
+  animation: slideIn 0.3s ease-out;
+}
+
+.animatePulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* レスポンシブコンテナ */
+.authContainer {
+  width: 100%;
+  max-width: 28rem; /* 448px */
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+/* モバイルファースト設計 */
+@media (min-width: 640px) {
+  .authContainer {
+    padding: 2rem;
+  }
+}
+
+/* フォーム要素のレスポンシブスタイル */
+.formInput {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 0.875rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  transition: all 0.2s;
+}
+
+.formInput:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* タブレット以上 */
+@media (min-width: 768px) {
+  .formInput {
+    font-size: 1rem;
+  }
+}
+
+/* ボタンのレスポンシブスタイル */
+.authButton {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: 0.375rem;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.authButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* タブレット以上 */
+@media (min-width: 768px) {
+  .authButton {
+    padding: 0.875rem 1.25rem;
+    font-size: 1rem;
+  }
+}
+
+/* プライマリボタン */
+.primaryButton {
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+}
+
+.primaryButton:hover:not(:disabled) {
+  background-color: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+/* セカンダリボタン */
+.secondaryButton {
+  background-color: white;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background-color: #f9fafb;
+  border-color: #d1d5db;
+}
+
+/* エラーメッセージのレスポンシブスタイル */
+.errorMessage {
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+@media (min-width: 768px) {
+  .errorMessage {
+    padding: 1rem;
+    font-size: 0.875rem;
+  }
+}
+
+/* フォームグループ */
+.formGroup {
+  margin-bottom: 1rem;
+}
+
+.formLabel {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 0.25rem;
+}
+
+/* リンクスタイル */
+.authLink {
+  font-size: 0.875rem;
+  color: #3b82f6;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.authLink:hover {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+/* セキュリティバッジ */
+.securityBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  background-color: #ecfdf5;
+  color: #059669;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  border: 1px solid #d1fae5;
+}
+
+@media (min-width: 768px) {
+  .securityBadge {
+    font-size: 0.875rem;
+    padding: 0.375rem 1rem;
+  }
+}
+
+/* ローディングスピナー */
+.spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: white;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* モバイル向け調整 */
+@media (max-width: 640px) {
+  /* タッチターゲットの最小サイズ確保 */
+  .authButton,
+  .formInput {
+    min-height: 44px;
+  }
+  
+  /* モバイルでの余白調整 */
+  .authContainer {
+    padding: 1rem;
+  }
+  
+  /* キーボード表示時の調整 */
+  .authContainer:has(input:focus) {
+    padding-bottom: 2rem;
+  }
+}
+
+/* ダークモード対応 */
+@media (prefers-color-scheme: dark) {
+  .formInput {
+    background-color: #1f2937;
+    border-color: #374151;
+    color: #f3f4f6;
+  }
+  
+  .formInput:focus {
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+  }
+  
+  .secondaryButton {
+    background-color: #1f2937;
+    color: #f3f4f6;
+    border-color: #374151;
+  }
+  
+  .secondaryButton:hover:not(:disabled) {
+    background-color: #374151;
+    border-color: #4b5563;
+  }
+}
+
+/* アクセシビリティ向上 */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* フォーカス表示の改善 */
+.focusVisible:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* 高コントラストモード対応 */
+@media (prefers-contrast: high) {
+  .authButton {
+    border: 2px solid currentColor;
+  }
+  
+  .formInput {
+    border-width: 2px;
+  }
+}

@@ -1,0 +1,111 @@
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'REPLACE_WITH_ACTUAL_ADDRESS'
+  smtp_auth_username: 'REPLACE_WITH_ACTUAL_ADDRESS'
+  smtp_auth_password: 'smtp_password'
+
+# Templates for custom alert formats
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Routing tree
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default'
+  routes:
+    # Critical alerts go to multiple channels
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 5s
+      repeat_interval: 30m
+
+    # Security alerts
+    - match:
+        service: security
+      receiver: 'security-team'
+      group_wait: 5s
+      repeat_interval: 15m
+
+    # Business alerts
+    - match:
+        service: business
+      receiver: 'business-team'
+      repeat_interval: 2h
+
+    # Infrastructure alerts
+    - match:
+        service: infrastructure
+      receiver: 'devops-team'
+      repeat_interval: 1h
+
+# Alert receivers
+receivers:
+  - name: 'default'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#alerts'
+        title: 'SafeVideo Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+  - name: 'critical-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#critical-alerts'
+        title: 'CRITICAL: SafeVideo Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        color: 'danger'
+    email_configs:
+      - to: 'REPLACE_WITH_ACTUAL_ADDRESS'
+        subject: 'CRITICAL: SafeVideo Alert'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          {{ end }}
+
+  - name: 'security-team'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#security-alerts'
+        title: 'Security Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        color: 'warning'
+    email_configs:
+      - to: 'REPLACE_WITH_ACTUAL_ADDRESS'
+        subject: 'Security Alert - SafeVideo'
+
+  - name: 'business-team'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#business-alerts'
+        title: 'Business Metric Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+  - name: 'devops-team'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#devops-alerts'
+        title: 'Infrastructure Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+# Inhibition rules
+inhibit_rules:
+  # Inhibit warning alerts if critical alert is firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+
+  # Inhibit high CPU if the instance is down
+  - source_match:
+      alertname: 'SafeVideoDown'
+    target_match:
+      alertname: 'HighCPUUsage'
+    equal: ['instance']

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sharegram SSO Test - HTTPS版</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; }
+        button { background: #e91e63; color: white; border: none; padding: 15px 30px; border-radius: 5px; cursor: pointer; margin: 10px; }
+        .result { margin: 20px 0; padding: 15px; border-radius: 5px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sharegram SSO テスト (HTTPS版)</h1>
+        
+        <div class="info result">
+            <h3>現在のブラウザ状態:</h3>
+            <div id="browser-state"></div>
+        </div>
+
+        <button onclick="simulateSharegramLogin()">1. Sharegramログイン状態をシミュレート</button>
+        <button onclick="testKYCSSO()">2. KYC SSO認証をテスト</button>
+        <button onclick="clearStorage()">3. ストレージをクリア</button>
+        
+        <div id="results"></div>
+    </div>
+
+    <script>
+        // 現在のオリジンを表示
+        console.log('Current origin:', window.location.origin);
+        
+        // Sharegramユーザー状態をシミュレート
+        function simulateSharegramLogin() {
+            const user = {
+                id: 'sharegram_test_' + Date.now(),
+                name: 'テストユーザー',
+                email: 'test@sharegram.com',
+                company_id: 'test_company'
+            };
+            
+            // 複数のキー形式でトークンを設定
+            localStorage.setItem('USER_ACCESS_TOKEN', 'sharegram_test_token_' + Date.now());
+            localStorage.setItem('CURRENT_USER_KEY', JSON.stringify(user));
+            localStorage.setItem('USER_STATUS', '1');
+            
+            showResult('success', 'Sharegramログイン状態をシミュレートしました');
+            updateBrowserState();
+        }
+
+        // KYC SSO認証をテスト
+        async function testKYCSSO() {
+            try {
+                const token = localStorage.getItem('USER_ACCESS_TOKEN');
+                const userStr = localStorage.getItem('CURRENT_USER_KEY');
+                
+                if (!token) {
+                    showResult('error', 'Sharegramトークンが見つかりません。まず"Sharegramログイン状態をシミュレート"を実行してください。');
+                    return;
+                }
+
+                const user = userStr ? JSON.parse(userStr) : null;
+                
+                showResult('info', 'SSO認証を開始しています...');
+                console.log('Sending request to:', 'https://stg.id-manager.com/api/sharegram/sso/prepare');
+                console.log('Request payload:', {
+                    token: token,
+                    apiKey: 'sharegram-api-key-test-2025',
+                    next: '/dashboard',
+                    userInfo: user
+                });
+                
+                // 1. SSO準備要求
+                const prepareResponse = await fetch('https://stg.id-manager.com/api/sharegram/sso/prepare', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        token: token,
+                        apiKey: 'sharegram-api-key-test-2025',
+                        next: '/dashboard',
+                        userInfo: user
+                    })
+                });
+
+                console.log('Prepare response status:', prepareResponse.status);
+                console.log('Prepare response headers:', [...prepareResponse.headers.entries()]);
+
+                const prepareData = await prepareResponse.json();
+                console.log('Prepare response data:', prepareData);
+                
+                if (!prepareData.success) {
+                    showResult('error', `SSO準備失敗: ${prepareData.error}`);
+                    return;
+                }
+
+                showResult('success', `SSO準備成功! ワンタイムコード: ${prepareData.oneTimeCode.substring(0, 8)}...`);
+                
+                // 2. SSO消費（実際のKYCサイトを新しいタブで開く）
+                const ssoURL = `https://stg.id-manager.com/api/sharegram/sso/consume?code=${prepareData.oneTimeCode}`;
+                
+                showResult('info', `KYCサイトを開いています: ${ssoURL}`);
+                
+                // 新しいタブでKYCサイトを開く
+                const newWindow = window.open(ssoURL, '_blank');
+                
+                if (newWindow) {
+                    showResult('success', 'KYCサイトが新しいタブで開かれました。ログイン状況を確認してください。');
+                } else {
+                    showResult('error', 'ポップアップがブロックされました。ブラウザの設定を確認してください。');
+                }
+                
+            } catch (error) {
+                showResult('error', `SSO認証エラー: ${error.message}`);
+                console.error('SSO Error:', error);
+                console.error('Error stack:', error.stack);
+            }
+        }
+
+        function clearStorage() {
+            localStorage.clear();
+            sessionStorage.clear();
+            showResult('info', 'ブラウザストレージをクリアしました');
+            updateBrowserState();
+        }
+
+        function showResult(type, message) {
+            const resultsDiv = document.getElementById('results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `result ${type}`;
+            resultDiv.innerHTML = `<strong>${new Date().toLocaleTimeString()}</strong>: ${message}`;
+            resultsDiv.appendChild(resultDiv);
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+        }
+
+        function updateBrowserState() {
+            const stateDiv = document.getElementById('browser-state');
+            const token = localStorage.getItem('USER_ACCESS_TOKEN');
+            const user = localStorage.getItem('CURRENT_USER_KEY');
+            const status = localStorage.getItem('USER_STATUS');
+            
+            stateDiv.innerHTML = `
+                <p><strong>現在のオリジン:</strong> ${window.location.origin}</p>
+                <p><strong>アクセストークン:</strong> ${token ? token.substring(0, 20) + '...' : 'なし'}</p>
+                <p><strong>ユーザー情報:</strong> ${user ? JSON.parse(user).name : 'なし'}</p>
+                <p><strong>ログイン状態:</strong> ${status || 'なし'}</p>
+            `;
+        }
+
+        // 初期化
+        updateBrowserState();
+        
+        // 1秒後に自動でSharegramログイン状態をシミュレート（テスト用）
+        setTimeout(() => {
+            if (!localStorage.getItem('USER_ACCESS_TOKEN')) {
+                simulateSharegramLogin();
+            }
+        }, 1000);
+    </script>
+</body>
+</html>

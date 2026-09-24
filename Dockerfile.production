@@ -1,0 +1,58 @@
+# Optimized Dockerfile for KYC Frontend
+FROM node:18-alpine AS builder
+
+# Install dependencies for building
+RUN apk add --no-cache python3 make g++
+
+WORKDIR /app
+
+# Copy package files first for better caching
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Copy application code
+COPY . .
+
+# Build the application
+ARG REACT_APP_API_URL=https://stg.id-manager.com/api
+ARG REACT_APP_WS_URL=wss://stg.id-manager.com/ws
+ENV REACT_APP_API_URL=$REACT_APP_API_URL
+ENV REACT_APP_WS_URL=$REACT_APP_WS_URL
+
+RUN npm run build
+
+# Production stage
+FROM nginx:1.24-alpine
+
+# Install curl for health checks
+RUN apk add --no-cache curl
+
+# Copy custom nginx config
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY nginx-app.conf /etc/nginx/conf.d/default.conf
+
+# Copy built application
+COPY --from=builder /app/build /usr/share/nginx/html
+
+# Create health check file
+RUN echo "OK" > /usr/share/nginx/html/health
+
+# Add non-root user
+RUN adduser -D -H -u 1001 -s /bin/sh www-user
+
+# Set ownership
+RUN chown -R www-user:www-user /usr/share/nginx/html && \
+    chown -R www-user:www-user /var/cache/nginx && \
+    chown -R www-user:www-user /var/log/nginx && \
+    chown -R www-user:www-user /etc/nginx/conf.d && \
+    touch /var/run/nginx.pid && \
+    chown -R www-user:www-user /var/run/nginx.pid
+
+USER www-user
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

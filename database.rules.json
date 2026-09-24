@@ -1,0 +1,239 @@
+{
+  "rules": {
+    // デフォルトは全て拒否
+    ".read": false,
+    ".write": false,
+    
+    // ユーザー情報
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid == $uid || auth.token.admin == true || auth.token.role == 'admin' || auth.token.role == 'super_admin')",
+        ".write": "auth != null && (auth.uid == $uid || auth.token.admin == true || auth.token.role == 'admin') && auth.token.accountStatus != 'suspended' && auth.token.accountStatus != 'banned'",
+        ".validate": "newData.hasChildren(['email', 'createdAt', 'updatedAt']) && newData.child('email').isString() && newData.child('email').val().matches(/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$/) && newData.child('updatedAt').val() == now",
+        
+        // ユーザープレゼンス（オンライン状態）
+        "presence": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid == $uid",
+          ".validate": "newData.hasChildren(['state', 'lastSeen']) && newData.child('state').isString() && newData.child('lastSeen').isNumber()"
+        },
+        
+        // 通知設定
+        "notificationSettings": {
+          ".read": "auth != null && auth.uid == $uid",
+          ".write": "auth != null && auth.uid == $uid",
+          ".validate": "newData.hasChildren(['email', 'push', 'sms'])"
+        }
+      }
+    },
+    
+    // パフォーマー情報
+    "performers": {
+      "$performerId": {
+        ".read": "auth != null && auth.token.accountStatus != 'suspended' && auth.token.accountStatus != 'banned'",
+        ".write": "auth != null && (auth.uid == $performerId || auth.token.admin == true || auth.token.role == 'admin') && auth.token.accountStatus == 'active'",
+        ".validate": "newData.hasChildren(['name', 'status', 'kycStatus']) && newData.child('status').val() != null && newData.child('kycStatus').val() != null",
+        
+        // パフォーマー統計（リアルタイム）
+        "stats": {
+          ".read": "auth != null",
+          ".write": false, // システムのみ更新
+          
+          "viewers": {
+            ".read": "auth != null",
+            ".write": false
+          },
+          
+          "earnings": {
+            ".read": "auth != null && (auth.uid == $performerId || auth.token.admin == true)",
+            ".write": false
+          }
+        },
+        
+        // ライブ配信状態
+        "streaming": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid == $performerId && auth.token.kycApproved == true",
+          ".validate": "newData.hasChildren(['isLive', 'startedAt']) && newData.child('isLive').isBoolean()"
+        }
+      }
+    },
+    
+    // KYCリクエスト
+    "kycRequests": {
+      "$requestId": {
+        ".read": "auth != null && (auth.uid == data.child('userId').val() || auth.token.admin == true || auth.token.role == 'moderator')",
+        ".write": "auth != null && ((auth.uid == newData.child('userId').val() && !data.exists()) || auth.token.admin == true || auth.token.role == 'moderator')",
+        ".validate": "newData.hasChildren(['userId', 'status', 'type', 'createdAt']) && newData.child('status').val() != null",
+        
+        // KYCステータス更新履歴
+        "statusHistory": {
+          "$historyId": {
+            ".read": "auth != null && (auth.uid == root.child('kycRequests').child($requestId).child('userId').val() || auth.token.admin == true)",
+            ".write": false // システムのみ
+          }
+        }
+      }
+    },
+    
+    // リアルタイムチャット
+    "chats": {
+      "$chatId": {
+        ".read": "auth != null && (root.child('chats').child($chatId).child('participants').child(auth.uid).exists() || auth.token.admin == true)",
+        ".write": false, // メッセージ送信は別ルール
+        
+        "messages": {
+          "$messageId": {
+            ".read": "auth != null && root.child('chats').child($chatId).child('participants').child(auth.uid).exists()",
+            ".write": "auth != null && root.child('chats').child($chatId).child('participants').child(auth.uid).exists() && newData.child('senderId').val() == auth.uid && auth.token.accountStatus == 'active'",
+            ".validate": "newData.hasChildren(['senderId', 'content', 'timestamp']) && newData.child('timestamp').val() == now && newData.child('content').isString() && newData.child('content').val().length <= 1000"
+          }
+        },
+        
+        "participants": {
+          "$userId": {
+            ".read": "auth != null && root.child('chats').child($chatId).child('participants').child(auth.uid).exists()",
+            ".write": false // システムのみ管理
+          }
+        },
+        
+        "typing": {
+          "$userId": {
+            ".read": "auth != null && root.child('chats').child($chatId).child('participants').child(auth.uid).exists()",
+            ".write": "auth != null && auth.uid == $userId && root.child('chats').child($chatId).child('participants').child(auth.uid).exists()",
+            ".validate": "newData.isBoolean()"
+          }
+        }
+      }
+    },
+    
+    // 動画メタデータ（リアルタイム更新用）
+    "videos": {
+      "$videoId": {
+        ".read": "auth != null && auth.token.accountStatus != 'suspended'",
+        ".write": "auth != null && (auth.uid == newData.child('performerId').val() || auth.token.admin == true) && auth.token.kycApproved == true",
+        
+        // 視聴回数（リアルタイム）
+        "views": {
+          ".read": "auth != null",
+          ".write": false, // システムのみ
+          
+          "count": {
+            ".read": "auth != null",
+            ".write": false
+          },
+          
+          "unique": {
+            ".read": "auth != null && (auth.uid == root.child('videos').child($videoId).child('performerId').val() || auth.token.admin == true)",
+            ".write": false
+          }
+        },
+        
+        // いいね
+        "likes": {
+          "$userId": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid == $userId && auth.token.accountStatus == 'active'",
+            ".validate": "newData.isBoolean()"
+          }
+        },
+        
+        // コメント（簡易版）
+        "comments": {
+          "$commentId": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid == newData.child('userId').val() && auth.token.accountStatus == 'active'",
+            ".validate": "newData.hasChildren(['userId', 'content', 'timestamp']) && newData.child('content').val().length <= 500 && newData.child('timestamp').val() == now"
+          }
+        }
+      }
+    },
+    
+    // システム設定（管理者のみ）
+    "systemConfig": {
+      ".read": "auth != null && (auth.token.admin == true || auth.token.role == 'admin' || auth.token.role == 'super_admin')",
+      ".write": "auth != null && auth.token.role == 'super_admin'",
+      
+      // メンテナンスモード
+      "maintenance": {
+        ".read": true, // 全ユーザーが確認可能
+        ".write": "auth != null && auth.token.role == 'super_admin'"
+      },
+      
+      // 機能フラグ
+      "features": {
+        ".read": "auth != null",
+        ".write": "auth != null && (auth.token.role == 'admin' || auth.token.role == 'super_admin')"
+      }
+    },
+    
+    // レート制限カウンター
+    "rateLimits": {
+      "$userId": {
+        ".read": "auth != null && (auth.uid == $userId || auth.token.admin == true)",
+        ".write": false, // システムのみ
+        
+        "$action": {
+          ".read": "auth != null && (auth.uid == $userId || auth.token.admin == true)",
+          ".write": false,
+          ".validate": "newData.hasChildren(['count', 'resetAt'])"
+        }
+      }
+    },
+    
+    // 監査ログ（書き込み専用）
+    "auditLogs": {
+      ".read": "auth != null && (auth.token.admin == true || auth.token.role == 'admin' || auth.token.role == 'super_admin')",
+      ".write": false, // システムのみ
+      
+      "$logId": {
+        ".read": "auth != null && (auth.token.admin == true || auth.token.role == 'admin' || auth.token.role == 'super_admin')",
+        ".write": false
+      }
+    },
+    
+    // セッション管理
+    "sessions": {
+      "$userId": {
+        ".read": "auth != null && (auth.uid == $userId || auth.token.admin == true)",
+        ".write": "auth != null && auth.uid == $userId",
+        
+        "$sessionId": {
+          ".read": "auth != null && (auth.uid == $userId || auth.token.admin == true)",
+          ".write": "auth != null && auth.uid == $userId",
+          ".validate": "newData.hasChildren(['createdAt', 'lastActivity', 'userAgent']) && newData.child('lastActivity').val() == now"
+        }
+      }
+    },
+    
+    // プッシュ通知トークン
+    "fcmTokens": {
+      "$userId": {
+        ".read": "auth != null && (auth.uid == $userId || auth.token.admin == true)",
+        ".write": "auth != null && auth.uid == $userId",
+        
+        "$tokenId": {
+          ".read": "auth != null && auth.uid == $userId",
+          ".write": "auth != null && auth.uid == $userId",
+          ".validate": "newData.hasChildren(['token', 'platform', 'createdAt']) && (newData.child('platform').val() == 'web' || newData.child('platform').val() == 'ios' || newData.child('platform').val() == 'android')"
+        }
+      }
+    },
+    
+    // 統計情報（読み取り専用）
+    "statistics": {
+      ".read": "auth != null && (auth.token.admin == true || auth.token.role == 'admin')",
+      ".write": false,
+      
+      "daily": {
+        ".read": "auth != null && (auth.token.admin == true || auth.token.role == 'admin')",
+        ".write": false
+      },
+      
+      "monthly": {
+        ".read": "auth != null && (auth.token.admin == true || auth.token.role == 'admin')",
+        ".write": false
+      }
+    }
+  }
+}

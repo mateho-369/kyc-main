@@ -1,0 +1,165 @@
+/**
+ * CSRF Interceptor Middleware
+ * Coordinates CSRF protection with frontend interceptors for seamless integration
+ */
+
+const { generateCSRFToken, verifyCSRFToken } = require('./security');
+
+/**
+ * Frontend-coordinated CSRF middleware
+ * Automatically handles CSRF token refreshing and coordination
+ */
+const csrfInterceptorMiddleware = (options = {}) => {
+  const {
+    autoRefresh = true,
+    refreshThreshold = 30 * 60 * 1000, // 30 minutes
+    includeInResponse = true
+  } = options;
+
+  return (req, res, next) => {
+    // Skip for excluded paths and methods
+    const excludedPaths = [
+      '/api/auth/login',
+      '/api/auth/register',
+      '/api/auth/firebase/register',
+      '/api/health',
+      '/health',
+      '/api/csrf-token',
+      '/api/csrf-config'
+    ];
+
+    const isExcluded = excludedPaths.some(path => req.path.startsWith(path));
+    const isProtectedMethod = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method);
+
+    if (isExcluded || !isProtectedMethod) {
+      return next();
+    }
+
+    // Get current CSRF token
+    const currentToken = req.cookies['csrf-token'];
+    const headerToken = req.headers['x-csrf-token'];
+
+    // Generate token if missing
+    if (!currentToken) {
+      const newToken = generateCSRFToken();
+      res.cookie('csrf-token', newToken, {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 3600000, // 1 hour
+        path: '/'
+      });
+
+      // Return error for protected requests without token
+      return res.status(403).json({
+        error: 'CSRF_TOKEN_MISSING',
+        message: 'CSRF token is required for this request',
+        csrfToken: newToken,
+        instructions: 'Include the CSRF token in the X-CSRF-Token header'
+      });
+    }
+
+    // Verify CSRF token
+    if (!headerToken || !verifyCSRFToken(req)) {
+      return res.status(403).json({
+        error: 'CSRF_VALIDATION_FAILED',
+        message: 'Invalid or missing CSRF token',
+        instructions: 'Ensure X-CSRF-Token header matches the csrf-token cookie'
+      });
+    }
+
+    // Auto-refresh token if needed
+    if (autoRefresh && req.session && req.session.csrfTokenCreated) {
+      const tokenAge = Date.now() - req.session.csrfTokenCreated;
+      
+      if (tokenAge > refreshThreshold) {
+        const newToken = generateCSRFToken();
+        res.cookie('csrf-token', newToken, {
+          httpOnly: false,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          maxAge: 3600000,
+          path: '/'
+        });
+
+        req.session.csrfTokenCreated = Date.now();
+
+        // Include new token in response headers for interceptor
+        if (includeInResponse) {
+          res.set('X-CSRF-Token-Refreshed', newToken);
+        }
+      }
+    }
+
+    // Add CSRF token to response locals for templates
+    res.locals.csrfToken = currentToken;
+
+    next();
+  };
+};
+
+/**
+ * Response interceptor for automatic CSRF token inclusion
+ */
+const csrfResponseInterceptor = (req, res, next) => {
+  // Store original json method
+  const originalJson = res.json;
+
+  // Override json method to include CSRF info
+  res.json = function(data) {
+    // Add CSRF information to successful auth responses
+    if (req.path.includes('/auth/') && data && data.success) {
+      const csrfToken = req.cookies['csrf-token'] || res.locals.csrfToken;
+      
+      if (csrfToken) {
+        data.csrfToken = csrfToken;
+        data.csrfConfig = {
+          headerName: 'X-CSRF-Token',
+          cookieName: 'csrf-token'
+        };
+      }
+    }
+
+    // Call original json method
+    return originalJson.call(this, data);
+  };
+
+  next();
+};
+
+/**
+ * CSRF configuration provider for frontend setup
+ */
+const csrfConfigProvider = (req, res, next) => {
+  // Add CSRF configuration to window object for SPAs
+  if (req.accepts('html')) {
+    res.locals.csrfConfig = {
+      headerName: 'X-CSRF-Token',
+      cookieName: 'csrf-token',
+      tokenEndpoint: '/api/csrf-token',
+      refreshEndpoint: '/api/csrf-token/refresh',
+      protectedMethods: ['POST', 'PUT', 'DELETE', 'PATCH']
+    };
+  }
+
+  next();
+};
+
+/**
+ * Development CSRF bypass (use only in development)
+ */
+const csrfDevBypass = (req, res, next) => {
+  if (process.env.NODE_ENV === 'development' && process.env.CSRF_DEV_BYPASS === 'true') {
+    console.warn('⚠️  CSRF protection bypassed in development mode');
+    return next();
+  }
+  
+  return csrfInterceptorMiddleware()(req, res, next);
+};
+
+module.exports = {
+  csrfInterceptorMiddleware,
+  csrfResponseInterceptor,
+  csrfConfigProvider,
+  csrfDevBypass
+};
