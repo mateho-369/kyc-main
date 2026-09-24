@@ -80,6 +80,11 @@ const User = sequelize.define('User', {
     type: DataTypes.BOOLEAN,
     defaultValue: false
   },
+  // Sharegram/Firebase から取得したプロフィール画像（SSOで同期）
+  profilePicture: {
+    type: DataTypes.STRING(512),
+    allowNull: true
+  },
   isActive: {
     type: DataTypes.BOOLEAN,
     defaultValue: true

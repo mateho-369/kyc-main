@@ -2,8 +2,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { createFirebaseSession } from '../services/auth';
-import { auth } from '../config/firebase';
-import { signInWithCustomToken } from 'firebase/auth';
 
 /**
  * Sharegram SSO認証ページ
@@ -19,6 +17,31 @@ import { signInWithCustomToken } from 'firebase/auth';
  * - performer_id: 出演者ID（action=editの場合は必須）
  * - come_back_url: 操作完了後のSharegramへの戻り先URL（オプション）
  */
+/**
+ * Sharegramは come_back を二重にURLエンコードして送ってくることがある
+ * （例: come_back=http%253A%252F%252Fshare-gram.com%252Fposts%252Fnew）。
+ * searchParams.get() は1回しかデコードしないため、そのまま使うと
+ * 「Sharegramに戻る」が壊れたURLに飛んでしまう。安定するまで復号する。
+ *
+ * @param {string|null} raw
+ * @returns {string|null}
+ */
+const decodeComeBackUrl = (raw) => {
+  if (!raw) return null;
+  let value = raw;
+  for (let i = 0; i < 3; i += 1) {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(value);
+    } catch (e) {
+      break;
+    }
+    if (decoded === value) break;
+    value = decoded;
+  }
+  return value;
+};
+
 const SSOPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -42,7 +65,9 @@ const SSOPage = () => {
         const performerId = searchParams.get('performer_id');
         // Sharegram historically sent both spellings. Accept both so the SSO
         // flow does not silently lose its return destination.
-        const comeBackUrl = searchParams.get('come_back_url') || searchParams.get('come_back');
+        const comeBackUrl = decodeComeBackUrl(
+          searchParams.get('come_back_url') || searchParams.get('come_back')
+        );
 
         // デバッグ情報を保存
         setDebugInfo({
@@ -89,6 +114,11 @@ const SSOPage = () => {
           sessionStorage.setItem('sharegram_performer_id', performerId);
         }
 
+        // 前回のログインで残ったローカルJWTを破棄する。
+        // 残したままだと axios のインターセプターが Authorization に付け、
+        // Sharegramのトークンより優先されて「Invalid token」になる。
+        localStorage.removeItem('accessToken');
+
         // Firebase ID Tokenの検証とセッション作成
         console.log('Firebase ID Token検証開始...');
 
@@ -116,10 +146,20 @@ const SSOPage = () => {
           console.error('Firebaseセッション作成エラー:', sessionError);
 
           // エラーメッセージを詳細化
-          if (sessionError.response?.status === 401) {
+          const status = sessionError.response?.status;
+          const code = sessionError.response?.data?.code
+            || sessionError.response?.data?.error?.code;
+
+          if (status === 401 && code === 'TOKEN_EXPIRED') {
+            throw new Error('Firebase ID Tokenの有効期限が切れています。Sharegramから再度ログインしてください。');
+          } else if (status === 401) {
             throw new Error('Firebase ID Tokenが無効または期限切れです。Sharegramから再度ログインしてください。');
-          } else if (sessionError.response?.status === 400) {
-            throw new Error('リクエストが不正です。パラメータを確認してください。');
+          } else if (status === 400) {
+            throw new Error('Firebase ID Tokenを解釈できませんでした。SharegramのFirebaseプロジェクトとサーバー設定（FIREBASE_PROJECT_ID）が一致しているか確認してください。');
+          } else if (status === 503) {
+            throw new Error('サーバーのFirebase設定が不完全です（FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY）。');
+          } else if (status === 429) {
+            throw new Error('ログイン試行が多すぎます。少し待ってから再試行してください。');
           } else {
             throw new Error(`認証処理中にエラーが発生しました: ${sessionError.message || '不明なエラー'}`);
           }
