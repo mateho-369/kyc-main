@@ -14,6 +14,10 @@
  *   node scripts/diagnose-sso-token.js            # 設定のチェックだけ実行
  *
  * URLをそのまま渡してもよい（token= を抽出する）。
+ *
+ * 【Windows】npm 経由（npm run diagnose:sso -- "<url>"）だと cmd.exe を経るため、
+ * URL中の & で切れて 'come_back' is not recognized... となる。node で直接実行する:
+ *   node scripts/diagnose-sso-token.js "<url>"
  */
 
 const fs = require('fs');

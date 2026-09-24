@@ -65,7 +65,32 @@ cp server/.env.auth.example server/.env
 
 npm start          # frontend dev server
 cd server && npm start   # API
+
+cd server && npm run migrate   # schema (migrations build it from zero)
+cd server && npm run seed      # optional: promote/create the admin (see Seeding)
 ```
+
+### Seeding
+
+`npm run seed` promotes one account to `admin`, or creates it if nobody has
+signed in yet. It is configured entirely through `server/.env` so no credentials
+land in git, and it is idempotent:
+
+```
+SEED_ADMIN_EMAIL=makara@gmail.com   # required; seed is a no-op when unset
+SEED_ADMIN_ROLE=admin               # optional, defaults to admin
+SEED_ADMIN_NAME=Makara              # optional, only used when creating
+```
+
+An SSO-provisioned account is `role: 'user'`, which is enough for the performer
+flow (create, list, documents, verify). Admin is only needed for
+`POST /api/performers/:id/approve`, the `/api/v1/analytics|bulk|batch|integrations`
+endpoints, and the admin sections of the UI. Seeded accounts get a random 32-byte
+password, so they can only sign in through Sharegram SSO.
+
+Do not run `npm run db:reset` on a database you care about: it is
+`db:drop && db:create && migrate && seed`, i.e. it deletes the schema and every
+row before rebuilding it.
 
 ## Configuration
 

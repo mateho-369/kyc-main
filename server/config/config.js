@@ -47,7 +47,13 @@ const resolve = (env) => ({
   logging: false
 });
 
-const build = (env, extra = {}) => ({ ...resolve(env), ...extra });
+const build = (env, extra = {}) => ({
+  ...resolve(env),
+  // sequelize-cli は these を env ブロック側から読む。ルートを残しつつ両方に置く。
+  migrationStorageTableName: 'SequelizeMeta',
+  seederStorage: 'sequelize',
+  ...extra
+});
 
 module.exports = {
   development: build(process.env),

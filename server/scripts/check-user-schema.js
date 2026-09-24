@@ -125,6 +125,34 @@ const run = async () => {
     missing.push(...REQUIRED_COLUMNS);
   }
 
+  // 2b) SSOで作られたユーザーとロール（admin昇格の確認に使う）
+  if (tableState.Users) {
+    console.log('\n=== Users の中身（先頭5件・最新更新順）===');
+    try {
+      // 列名（updatedAt / updated_at のような差異）に依存しないようにする。
+      // 無い列を指定して丸ごと失敗するより、確実に在る物だけ選んだ方が有用。
+      const [users] = await sequelize.query(
+        `SELECT id, email, name, role, authProvider, sharegramUserId, profilePicture
+           FROM Users ORDER BY id DESC LIMIT 5`
+      );
+      if (users.length === 0) {
+        console.log('  [INFO] 0件（SSOでログインするとここに実アカウントが作られます）');
+      }
+      users.forEach((u) => {
+        const flag = u.role === 'admin' ? '[ADMIN]' : '[user] ';
+        const picture = u.profilePicture ? 'URL設定済み' : 'NULL';
+        console.log(`  ${flag} #${u.id} ${u.email}  name=${u.name}  provider=${u.authProvider}  picture=${picture}`);
+      });
+      if (!users.some((u) => u.role === 'admin')) {
+        console.log('  [INFO] 管理者が1人もいません。approve / analytics 系を使うなら');
+        console.log('         server/.env に SEED_ADMIN_EMAIL=<自分のemail> → npm run seed');
+      }
+    } catch (error) {
+      // updated_at の有無など、DB側の微妙な違いで本体の判定を止めない
+      console.log(`  [SKIP] 一覧を取得できませんでした: ${error.message.split('\n')[0]}`);
+    }
+  }
+
   // 3) マイグレーション履歴
   console.log('\n=== マイグレーション履歴（SequelizeMeta）===');
   let appliedCount = -1;
