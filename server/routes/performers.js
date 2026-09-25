@@ -36,6 +36,27 @@ const toDocumentsObject = (value) => {
   return typeof value === 'object' ? value : {};
 };
 
+/**
+ * 出演者を「JSON で返す形」にする（Sequelize インスタンス／プレーンオブジェクト両対応）。
+ * documents は MariaDB だと文字列で返るので、ここでオブジェクトに揃える
+ * （Sharegram も画面も documents をオブジェクトとして読む）。
+ */
+const toPerformerJson = (performer) => {
+  const plain = performer && typeof performer.toJSON === 'function' ? performer.toJSON() : { ...performer };
+  return { ...plain, documents: toDocumentsObject(plain.documents) };
+};
+
+/**
+ * Sharegram（SYSTEM_API_KEYS の Bearer = Sharegram の AUTHORIZED_KYC_KEY）からの読み取りを1行で記録する。
+ * Sharegram のコードは変更しない前提なので、「何を聞かれて何を返したか」を KYC 側のログで
+ * 追えるようにしておく。氏名などの個人情報は出さない（ID とステータスだけ）。
+ */
+const logSharegramRead = (req, message) => {
+  if (req.sharegramAuth) {
+    console.log(`[sharegram-api] ${req.method} ${req.originalUrl} → ${message}`);
+  }
+};
+
 // ファイルアップロード設定
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -153,6 +174,9 @@ router.get('/', auth, async (req, res) => {
       if (userByFirebase) {
         whereClause.userId = userByFirebase.id;
       } else {
+        // よくある原因: Firebase エミュレータのデータ（.firebase-data）を消して作り直した等で、
+        // Sharegram が送る UID と KYC の users.firebaseUid がずれている
+        logSharegramRead(req, `0 performers: no KYC user has firebaseUid=${user_id} (performers belong to the KYC user created at SSO; compare users.firebaseUid)`);
         return res.json({ success: true, data: [] });
       }
     }
@@ -234,6 +258,14 @@ router.get('/', auth, async (req, res) => {
       limit,
       offset
     });
+
+    if (req.sharegramAuth) {
+      const summary = performers
+        .slice(0, 10)
+        .map((p) => `#${p.id} ${p.status}`)
+        .join(', ');
+      logSharegramRead(req, `${performers.length} of ${totalCount} performer(s)${summary ? `: ${summary}` : ''}`);
+    }
     
     // 監査ログ記録（userIdがnullの場合はスキップ - テストAPIキー認証時）
     const auditUserId = req.user?.id || req.sharegramAuth?.userId || null;
@@ -277,6 +309,7 @@ router.get('/:id', auth, async (req, res) => {
     const performer = await Performer.findByPk(req.params.id);
     
     if (!performer) {
+      logSharegramRead(req, '404 (no performer with this id)');
       return res.status(404).json({ 
         success: false,
         message: '出演者情報が見つかりません。正しいIDで再度お試しください。' 
@@ -304,11 +337,16 @@ router.get('/:id', auth, async (req, res) => {
     });
     
     }
-    // 統一されたレスポンス形式で返す
+    // Sharegram 連携仕様（API_DOCUMENTATION_SHAREGRAM.md 4.2）は出演者の項目を data 直下に置く。
+    // KYC の画面（performerService: data.performer || data）と従来の利用者は data.performer を読む。
+    // どちらの読み方でも同じ内容になるよう両方に入れる（Sharegram 側は変更しない）。
+    const performerJson = toPerformerJson(performer);
+    logSharegramRead(req, `200 (status=${performerJson.status})`);
     res.json({
       success: true,
       data: {
-        performer: performer
+        ...performerJson,
+        performer: performerJson
       }
     });
   } catch (err) {

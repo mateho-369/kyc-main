@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { createPerformer, getPerformerById, updatePerformer } from '../services/performerService';
 import { trackPerformerRegistration, trackDocumentUpload, trackError } from '../services/firebaseAnalytics';
 import { resizeIfNeeded } from '../utils/imageResize';
-import { buildReturnUrl } from '../utils/sharegramReturn';
+import { buildReturnUrl, takeEditReturnUrl, clearSsoContext } from '../utils/sharegramReturn';
 
 const AddPerformerPage = () => {
   const navigate = useNavigate();
@@ -311,7 +311,14 @@ const AddPerformerPage = () => {
 
         await updatePerformer(editId, updateData);
         console.log('出演者情報更新成功');
-        navigate(`/performers/${editId}`);
+        // Sharegram から SSO（action=edit）で来た編集なら、保存後に come_back_url へ戻す（仕様 3.3）
+        const editReturnTo = takeEditReturnUrl(window.sessionStorage, editId);
+        if (editReturnTo) {
+          console.log('Sharegramにリダイレクト:', editReturnTo);
+          window.location.href = editReturnTo;
+        } else {
+          navigate(`/performers/${editId}`);
+        }
       } else {
         // === 新規登録モード ===
         // ファイルが選択されているか確認
@@ -359,7 +366,7 @@ const AddPerformerPage = () => {
         // 値が壊れている（相対パス・javascript: など）場合は、登録成功をエラーに
         // 見せないために詳細ページへフォールバックする。
         const comeBackUrl = sessionStorage.getItem('sharegram_come_back_url');
-        sessionStorage.removeItem('sharegram_come_back_url');
+        clearSsoContext(window.sessionStorage);
         const returnTo = buildReturnUrl(comeBackUrl, {
           performer_id: newPerformer?.id,
           status: 'created'

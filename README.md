@@ -82,7 +82,8 @@ npm run emulator   # Auth 9099 / Firestore 8080 / RTDB 9000 / Storage 9199 / Hos
   folder too: KYC users are linked by Firebase UID, and a re-created emulator account gets a new UID.
 - Enable it on the frontend with `REACT_APP_USE_FIREBASE_EMULATOR=true` and on the API with
   `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` (project id `demo-kyc-local` on both).
-- Sending performers to Sharegram: [`docs/SHAREGRAM_KYC_WEBHOOK.md`](docs/SHAREGRAM_KYC_WEBHOOK.md).
+- How Sharegram (unchanged) reads performers from KYC, and which `.env` values must match:
+  [`docs/SHAREGRAM_INTEGRATION.md`](docs/SHAREGRAM_INTEGRATION.md).
 
 ### Read this first
 

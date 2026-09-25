@@ -10,6 +10,7 @@
     "test": "node tests/scripts/run-all-tests.js",
     "test:unit": "jest --config tests/jest.config.js --testPathPattern=unit",
     "test:sso": "jest --config tests/sso/jest.config.js",
+    "secrets:local": "node scripts/print-local-secrets.js",
     "test:integration": "jest --config tests/jest.config.js --testPathPattern=integration --runInBand",
     "test:e2e": "cypress run --config-file tests/e2e/cypress.config.js",
     "test:e2e:open": "cypress open --config-file tests/e2e/cypress.config.js",

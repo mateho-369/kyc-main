@@ -155,7 +155,8 @@ const SSOPage = () => {
           redirectPath = '/performers/add';
           console.log('新規登録画面へリダイレクト:', redirectPath);
         } else if (action === 'edit') {
-          redirectPath = `/performers/${performerId}`;
+          // 仕様 3.3: action=edit は「指定された出演者の編集画面」。保存後は come_back_url へ戻る
+          redirectPath = `/performers/${encodeURIComponent(performerId)}/edit`;
           console.log('編集画面へリダイレクト:', redirectPath);
         }
 

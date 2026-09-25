@@ -111,9 +111,11 @@ if (written === 0) {
   Object.entries(allGenerated).forEach(([k, v]) => console.log(`  ${k.padEnd(34)} ${v.slice(0, 10)}…${v.slice(-4)}`));
   console.log('');
   console.log('次にやること:');
-  console.log('  1) server/.env の FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY を貼る');
-  console.log('     （Sharegram と同じプロジェクト: adroit-standard-496710-r5）');
-  console.log('  2) MySQL のパスワードを server/.env の MYSQL_PASSWORD に入れる');
-  console.log('  3) cd server && npm run migrate && npm run seed');
-  console.log('  4) npm start（ルート＝フロント） / cd server && npm start（API）');
+  console.log('  1) server/.env の FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY');
+  console.log('     ローカル（Firebase エミュレータ）: cd server && npm run secrets:local の出力を貼る');
+  console.log('     本番/ステージング: Sharegram と同じプロジェクトのサービスアカウントを貼る');
+  console.log('  2) Sharegram 連携: server/.env の SYSTEM_API_KEYS に Sharegram の AUTHORIZED_KYC_KEY と同じ値');
+  console.log('  3) MySQL のパスワードを server/.env の MYSQL_PASSWORD に入れる');
+  console.log('  4) cd server && npm run migrate && npm run seed');
+  console.log('  5) npm start（ルート＝フロント） / cd server && npm start（API）');
 }

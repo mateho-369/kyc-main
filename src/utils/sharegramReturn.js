@@ -60,3 +60,38 @@ export function buildReturnUrl(raw, params = {}) {
   });
   return url.toString();
 }
+
+const SSO_KEYS = ['sharegram_come_back_url', 'sharegram_action', 'sharegram_performer_id'];
+
+/**
+ * SSO（action=edit）で依頼された出演者の編集を保存したあとの戻り先。
+ * 仕様（API_DOCUMENTATION_SHAREGRAM.md 3.3）: 操作完了後、come_back_url があればそこへ戻す。
+ *
+ * SSO で編集を頼まれた「その出演者」を保存したときだけ Sharegram に戻す。
+ * （管理者が KYC 内で別の出演者を編集したときに、古い come_back_url へ飛ばないように）
+ * 対象の編集が終わったら SSO 用の sessionStorage は片付ける。
+ *
+ * @param {Storage} storage   sessionStorage
+ * @param {string|number} performerId  保存した出演者の ID
+ * @returns {string|null}     戻り先URL（performer_id / status=updated 付き）。戻さない場合は null
+ */
+export function takeEditReturnUrl(storage, performerId) {
+  if (!storage || performerId === undefined || performerId === null) return null;
+  const action = storage.getItem('sharegram_action');
+  const requestedId = storage.getItem('sharegram_performer_id');
+  if (action !== 'edit' || !requestedId || String(requestedId) !== String(performerId)) return null;
+
+  const returnTo = buildReturnUrl(storage.getItem('sharegram_come_back_url'), {
+    performer_id: performerId,
+    status: 'updated'
+  });
+  // SSO で頼まれた編集はこれで完了。戻り先が壊れていても値は残さない
+  SSO_KEYS.forEach((key) => storage.removeItem(key));
+  return returnTo;
+}
+
+/** 新規登録で Sharegram に戻したあとに、SSO 用の値を残さない */
+export function clearSsoContext(storage) {
+  if (!storage) return;
+  SSO_KEYS.forEach((key) => storage.removeItem(key));
+}

@@ -3,7 +3,7 @@
  * 実行: npx vitest run src/utils
  */
 import { describe, it, expect } from 'vitest';
-import { decodeComeBackUrl, isSafeReturnUrl, buildReturnUrl } from '../sharegramReturn';
+import { decodeComeBackUrl, isSafeReturnUrl, buildReturnUrl, takeEditReturnUrl, clearSsoContext } from '../sharegramReturn';
 
 describe('decodeComeBackUrl', () => {
   it('returns null for empty or non-string input', () => {
@@ -60,5 +60,72 @@ describe('buildReturnUrl', () => {
     expect(buildReturnUrl('/posts/new', { performer_id: 1 })).toBeNull();
     expect(buildReturnUrl('javascript:alert(1)', {})).toBeNull();
     expect(buildReturnUrl(null, {})).toBeNull();
+  });
+});
+
+/** sessionStorage と同じ API の最小実装（テストごとに作り直す） */
+const memoryStorage = (initial = {}) => {
+  const map = new Map(Object.entries(initial));
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => map.set(key, String(value)),
+    removeItem: (key) => map.delete(key),
+    keys: () => [...map.keys()]
+  };
+};
+
+describe('takeEditReturnUrl (SSO action=edit, spec 3.3)', () => {
+  const ssoEdit = (performerId, comeBackUrl = 'http://localhost:3000/performers/2') =>
+    memoryStorage({
+      sharegram_action: 'edit',
+      sharegram_performer_id: String(performerId),
+      sharegram_come_back_url: comeBackUrl
+    });
+
+  it('returns to come_back_url with performer_id and status=updated after saving the requested performer', () => {
+    const storage = ssoEdit(2);
+    expect(takeEditReturnUrl(storage, 2))
+      .toBe('http://localhost:3000/performers/2?performer_id=2&status=updated');
+    expect(storage.keys()).toEqual([]); // SSO の依頼は完了。値を残さない
+  });
+
+  it('matches the id whether the route gives a string or a number', () => {
+    expect(takeEditReturnUrl(ssoEdit('2'), '2')).toContain('performer_id=2');
+  });
+
+  it('stays in KYC when a different performer was edited (stale come_back_url must not be used)', () => {
+    const storage = ssoEdit(2);
+    expect(takeEditReturnUrl(storage, 5)).toBeNull();
+    expect(storage.getItem('sharegram_come_back_url')).not.toBeNull();
+  });
+
+  it('stays in KYC when the SSO was for create, or there was no SSO at all', () => {
+    expect(takeEditReturnUrl(memoryStorage({ sharegram_action: 'create', sharegram_come_back_url: 'http://localhost:3000/x' }), 2)).toBeNull();
+    expect(takeEditReturnUrl(memoryStorage(), 2)).toBeNull();
+  });
+
+  it('does not navigate to an unsafe come_back_url, and still clears the finished SSO request', () => {
+    const storage = ssoEdit(2, 'javascript:alert(1)');
+    expect(takeEditReturnUrl(storage, 2)).toBeNull();
+    expect(storage.keys()).toEqual([]);
+  });
+
+  it('accepts the double-encoded come_back_url Sharegram may send', () => {
+    const storage = ssoEdit(2, encodeURIComponent('http://localhost:3000/performers/2?tab=kyc'));
+    expect(takeEditReturnUrl(storage, 2))
+      .toBe('http://localhost:3000/performers/2?tab=kyc&performer_id=2&status=updated');
+  });
+});
+
+describe('clearSsoContext', () => {
+  it('removes every SSO key so a later KYC-internal edit does not jump back to Sharegram', () => {
+    const storage = memoryStorage({
+      sharegram_action: 'create',
+      sharegram_performer_id: '9',
+      sharegram_come_back_url: 'http://localhost:3000/posts/new',
+      unrelated: 'keep'
+    });
+    clearSsoContext(storage);
+    expect(storage.keys()).toEqual(['unrelated']);
   });
 });

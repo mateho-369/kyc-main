@@ -85,7 +85,9 @@ const getConfigProblem = (config) => {
 /** 起動ログ用の 1 行サマリー（シークレットは出さない） */
 const describeConfig = () => {
   const config = getConfig();
-  if (!config.url) return 'disabled (KYC_WEBHOOK_URL is not set)';
+  // Sharegram master にはこの受信口が無い。Sharegram は KYC の GET /api/performers を読みに来る
+  // （docs/SHAREGRAM_INTEGRATION.md）ので、未設定＝正常。
+  if (!config.url) return 'disabled (KYC_WEBHOOK_URL is not set — normal: Sharegram reads performers from GET /api/performers)';
 
   const problem = getConfigProblem(config);
   if (problem) return `⚠ NOT SENDING: ${problem}`;

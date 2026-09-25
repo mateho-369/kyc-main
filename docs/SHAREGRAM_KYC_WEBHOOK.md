@@ -1,8 +1,12 @@
 # KYC → Sharegram performer webhook
 
+> **Optional — not used with Sharegram master.** This push needs a receiver (table + route) inside the
+> Sharegram repo, which master does not have. With an unchanged Sharegram, leave `KYC_WEBHOOK_URL` unset:
+> Sharegram reads performers from KYC instead — see [`SHAREGRAM_INTEGRATION.md`](SHAREGRAM_INTEGRATION.md).
+
 The KYC database (`safevideo`) and the Sharegram database (`fansite_dev_new`) are
-separate. When a performer is created in KYC, nothing appears in Sharegram unless
-KYC **sends** it. The KYC backend does this with a signed webhook.
+separate. Sharegram master reads performers from the KYC API. A Sharegram that adds the
+receiver below can instead be **notified** by KYC with a signed webhook when performers change.
 
 ```
 KYC frontend :3300 → KYC API :5002 (creates performer in safevideo)
