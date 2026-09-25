@@ -30,6 +30,10 @@ require('dotenv').config({ path: envPath });
   if (process.env.DISABLE_DB === 'true') {
     console.warn('[env] ⚠ DISABLE_DB=true: DBモックモードのため、SSOユーザーは永続化されません');
   }
+
+  // KYC → Sharegram の出演者通知（KYC_WEBHOOK_URL / KYC_WEBHOOK_SECRET）
+  const { describeConfig } = require('./services/sharegram/sharegramWebhook');
+  console.log(`[env] Sharegram webhook: ${describeConfig()}`);
 })();
 
 // セキュリティミドルウェアをインポート

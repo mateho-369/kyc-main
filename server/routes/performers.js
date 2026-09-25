@@ -10,6 +10,31 @@ const auth = require('../middleware/hybrid-auth');
 const checkRole = require('../middleware/checkRole');
 const { Performer, AuditLog, User } = require('../models');
 const { Op } = require('sequelize');
+const { notifySharegram } = require('../services/sharegram/sharegramWebhook');
+
+// 画面/Sharegram は snake_case（agreement_file）、DB は camelCase（agreementFile）で
+// 書類名を扱う。API の入口で揃えないと「存在する書類が 404」になる。
+const DOCUMENT_TYPE_ALIASES = {
+  agreement_file: 'agreementFile',
+  id_front: 'idFront',
+  id_back: 'idBack',
+  selfie_with_id: 'selfieWithId'
+};
+const normalizeDocumentType = (type) => DOCUMENT_TYPE_ALIASES[type] || type;
+
+// documents は JSON カラム。MySQL はオブジェクト、MariaDB などでは文字列で返るので両対応する。
+const toDocumentsObject = (value) => {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  }
+  return typeof value === 'object' ? value : {};
+};
 
 // ファイルアップロード設定
 const storage = multer.diskStorage({
@@ -372,6 +397,10 @@ router.put('/:id', auth, uploadFields, async (req, res) => {
       });
     }
 
+    notifySharegram('performer.updated', performer, {
+      updatedDocuments: req.files ? Object.keys(req.files) : []
+    });
+
     res.json({
       success: true,
       data: { performer }
@@ -506,6 +535,9 @@ router.post('/', auth, uploadFields, async (req, res) => {
       });
     }
     
+    // Sharegram へ通知（KYC_WEBHOOK_URL 設定時のみ。レスポンスはブロックしない）
+    notifySharegram('performer.created', performer);
+
     // 統一されたレスポンス形式で返す
     res.json({
       success: true,
@@ -650,6 +682,119 @@ router.get('/:id/documents', auth, async (req, res) => {
   }
 });
 
+// NOTE: /:id/documents/metadata は /:id/documents/:type より前に定義すること。
+// 後ろにあると Express が :type = "metadata" として先にマッチさせ、常に 404 になる。
+// @route   GET api/performers/:id/documents/metadata
+// @desc    Get document metadata (lightweight)
+// @access  Private (CEOミッション緊急実装)
+router.get('/:id/documents/metadata', auth, async (req, res) => {
+  try {
+    const performer = await Performer.findByPk(req.params.id);
+    
+    if (!performer) {
+      return res.status(404).json({ 
+        success: false,
+        error: {
+          code: 'PERFORMER_NOT_FOUND',
+          message: '出演者情報が見つかりません。'
+        }
+      });
+    }
+
+    // アクセス制御：本人または管理者のみ
+    if (req.user?.role !== 'admin' && performer.userId !== req.user?.id) {
+      return res.status(403).json({ 
+        success: false,
+        error: {
+          code: 'ACCESS_DENIED',
+          message: 'アクセス権限がありません。'
+        }
+      });
+    }
+
+    // 軽量メタデータを構築
+    // （以前は JSON.parse(object) で常に例外 → 500 になっていた）
+    const documents = toDocumentsObject(performer.documents);
+    const documentMetadata = [];
+
+    const documentTypes = [
+      { type: 'agreementFile', name: '出演同意書' },
+      { type: 'idFront', name: '身分証明書（表面）' },
+      { type: 'idBack', name: '身分証明書（裏面）' },
+      { type: 'selfie', name: 'セルフィー' },
+      { type: 'selfieWithId', name: '身分証明書付きセルフィー' }
+    ];
+
+    documentTypes.forEach(({ type, name }) => {
+      const doc = documents[type];
+      if (doc) {
+        documentMetadata.push({
+          type,
+          name,
+          status: doc.verified ? 'verified' : 'pending',
+          uploadedAt: doc.uploadedAt || performer.createdAt,
+          verifiedAt: doc.verifiedAt || null,
+          verifiedBy: doc.verifiedBy || null,
+          fileSize: doc.size || null,
+          mimeType: doc.mimeType || null
+        });
+      } else {
+        documentMetadata.push({
+          type,
+          name,
+          status: 'missing',
+          uploadedAt: null,
+          verifiedAt: null,
+          verifiedBy: null,
+          fileSize: null,
+          mimeType: null
+        });
+      }
+    });
+
+    // 監査ログ記録（ユーザー認証時のみ）
+    if (req.user && req.user.id) {
+      // AuditLog の必須カラムは resourceType / resourceId（targetType/targetId は存在せず
+      // notNull 違反で 500 になっていた）
+      await AuditLog.create({
+        userId: req.user.id,
+        action: 'view',
+        resourceType: 'document',
+        resourceId: performer.id,
+        details: {
+          documentType: 'metadata',
+          documentCount: documentMetadata.length
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent') || ''
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        performerId: performer.id,
+        documents: documentMetadata,
+        totalDocuments: documentMetadata.length,
+        verifiedDocuments: documentMetadata.filter(d => d.status === 'verified').length,
+        pendingDocuments: documentMetadata.filter(d => d.status === 'pending').length,
+        missingDocuments: documentMetadata.filter(d => d.status === 'missing').length,
+        overallStatus: performer.status || 'pending'
+      }
+    });
+
+  } catch (error) {
+    console.error('Document metadata error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: {
+        code: 'METADATA_ERROR',
+        message: 'メタデータの取得中にエラーが発生しました。'
+      }
+    });
+  }
+});
+
 // /:id/documents/:type エンドポイントを探して修正
 router.get('/:id/documents/:type', auth, async (req, res) => {
   try {
@@ -670,8 +815,8 @@ router.get('/:id/documents/:type', auth, async (req, res) => {
       });
     }
     
-    const docType = req.params.type;
-    const docData = performer.documents ? performer.documents[docType] : null;
+    const docType = normalizeDocumentType(req.params.type);
+    const docData = toDocumentsObject(performer.documents)[docType] || null;
     
     if (!docData || !docData.path) {
       return res.status(404).json({ message: '指定された書類が見つかりません' });
@@ -714,115 +859,6 @@ router.get('/:id/documents/:type', auth, async (req, res) => {
   }
 });
 
-// @route   GET api/performers/:id/documents/metadata
-// @desc    Get document metadata (lightweight)
-// @access  Private (CEOミッション緊急実装)
-router.get('/:id/documents/metadata', auth, async (req, res) => {
-  try {
-    const performer = await Performer.findByPk(req.params.id);
-    
-    if (!performer) {
-      return res.status(404).json({ 
-        success: false,
-        error: {
-          code: 'PERFORMER_NOT_FOUND',
-          message: '出演者情報が見つかりません。'
-        }
-      });
-    }
-
-    // アクセス制御：本人または管理者のみ
-    if (req.user.role !== 'admin' && performer.userId !== req.user?.id) {
-      return res.status(403).json({ 
-        success: false,
-        error: {
-          code: 'ACCESS_DENIED',
-          message: 'アクセス権限がありません。'
-        }
-      });
-    }
-
-    // 軽量メタデータを構築
-    const documents = performer.documents ? JSON.parse(performer.documents) : {};
-    const documentMetadata = [];
-
-    const documentTypes = [
-      { type: 'agreementFile', name: '出演同意書' },
-      { type: 'idFront', name: '身分証明書（表面）' },
-      { type: 'idBack', name: '身分証明書（裏面）' },
-      { type: 'selfie', name: 'セルフィー' },
-      { type: 'selfieWithId', name: '身分証明書付きセルフィー' }
-    ];
-
-    documentTypes.forEach(({ type, name }) => {
-      const doc = documents[type];
-      if (doc) {
-        documentMetadata.push({
-          type,
-          name,
-          status: doc.verified ? 'verified' : 'pending',
-          uploadedAt: doc.uploadedAt || performer.createdAt,
-          verifiedAt: doc.verifiedAt || null,
-          verifiedBy: doc.verifiedBy || null,
-          fileSize: doc.size || null,
-          mimeType: doc.mimeType || null
-        });
-      } else {
-        documentMetadata.push({
-          type,
-          name,
-          status: 'missing',
-          uploadedAt: null,
-          verifiedAt: null,
-          verifiedBy: null,
-          fileSize: null,
-          mimeType: null
-        });
-      }
-    });
-
-    // 監査ログ記録（ユーザー認証時のみ）
-    if (req.user && req.user.id) {
-      await AuditLog.create({
-        userId: req.user?.id || null,
-        action: 'DOCUMENT_METADATA_VIEW',
-        targetId: performer.id,
-        targetType: 'Performer',
-        details: {
-          performerId: performer.id,
-          requestedBy: req.user.email,
-          metadata: documentMetadata.length
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent')
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        performerId: performer.id,
-        documents: documentMetadata,
-        totalDocuments: documentMetadata.length,
-        verifiedDocuments: documentMetadata.filter(d => d.status === 'verified').length,
-        pendingDocuments: documentMetadata.filter(d => d.status === 'pending').length,
-        missingDocuments: documentMetadata.filter(d => d.status === 'missing').length,
-        overallStatus: performer.status || 'pending'
-      }
-    });
-
-  } catch (error) {
-    console.error('Document metadata error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: {
-        code: 'METADATA_ERROR',
-        message: 'メタデータの取得中にエラーが発生しました。'
-      }
-    });
-  }
-});
-
 // @route   PUT api/performers/:id/documents/:type/verify
 // @desc    Verify a document
 // @access  Private
@@ -843,8 +879,9 @@ router.put('/:id/documents/:type/verify', auth, async (req, res) => {
       });
     }
     
-    const docType = req.params.type;
-    const documents = { ...(performer.documents || {}) };
+    // 画面は agreement_file、DB は agreementFile。入口で揃える（以前はここで 404 になっていた）
+    const docType = normalizeDocumentType(req.params.type);
+    const documents = { ...toDocumentsObject(performer.documents) };
     
     if (!documents[docType]) {
       return res.status(404).json({ message: '指定された書類が見つかりません。正しい書類タイプを指定してください。' });
@@ -884,6 +921,17 @@ router.put('/:id/documents/:type/verify', auth, async (req, res) => {
         ipAddress: req.ip,
         userAgent: req.get('user-agent') || ''
       });
+    }
+
+    // 上の Performer.update はインスタンスを更新しないので、保存した値で通知する
+    const verifiedPerformer = {
+      ...performer.get({ plain: true }),
+      documents,
+      status: allVerified ? 'active' : performer.status
+    };
+    notifySharegram('document.verified', verifiedPerformer, { document: { type: docType } });
+    if (allVerified) {
+      notifySharegram('performer.approved', verifiedPerformer);
     }
     
     res.json({ 
@@ -1239,6 +1287,8 @@ router.post('/:id/approve', [auth, checkRole(['admin'])], async (req, res) => {
       });
     }
     
+    notifySharegram('performer.approved', performer);
+
     // Webhook通知をトリガー（別途実装）
     const { triggerWebhook } = require('../services/webhookService');
     await triggerWebhook('performer.approved', {
@@ -1572,6 +1622,9 @@ router.delete('/:id', auth, async (req, res) => {
     await Performer.destroy({
       where: { id: req.params.id }
     });
+
+    // インスタンスには削除前の値が残っているので、それで通知する
+    notifySharegram('performer.deleted', performer);
     
     res.json({ message: '出演者情報が削除されました' });
   } catch (err) {

@@ -33,7 +33,8 @@ const PerformerDetailPage = () => {
      setImageLoadError(false);
 
      // SecureApiClientを使用して認証付きで画像を取得
-     const response = await secureApiClient.get(`/api/performers/${id}/documents/${documentType}`, {
+     // baseURL（REACT_APP_API_URL）が既に .../api で終わるので、ここに /api を付けると /api/api/... で 404
+     const response = await secureApiClient.get(`/performers/${id}/documents/${documentType}`, {
        responseType: 'blob'
      });
 

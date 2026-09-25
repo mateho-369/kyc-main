@@ -70,6 +70,20 @@ cd server && npm start   # API
 cd server && npm run db:setup  # migrate (schema from zero) + seed (accounts + demo data)
 ```
 
+### Local Firebase Emulator (optional)
+
+```bash
+npm run emulator   # Auth 9099 / Firestore 8080 / RTDB 9000 / Storage 9199 / Hosting 5000 / UI 4000
+```
+
+- Uses `firebase.emulator.json` and the deny-all rules in `emulator/`. `firebase.json` and the
+  root `*.rules` files are the deploy config and are not touched by the emulator.
+- Accounts persist in `.firebase-data/` (git-ignored). When moving to a new checkout, copy that
+  folder too: KYC users are linked by Firebase UID, and a re-created emulator account gets a new UID.
+- Enable it on the frontend with `REACT_APP_USE_FIREBASE_EMULATOR=true` and on the API with
+  `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` (project id `demo-kyc-local` on both).
+- Sending performers to Sharegram: [`docs/SHAREGRAM_KYC_WEBHOOK.md`](docs/SHAREGRAM_KYC_WEBHOOK.md).
+
 ### Read this first
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — where each kind of change goes, the SSO

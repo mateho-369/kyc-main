@@ -1,0 +1,18 @@
+{
+  "emulators": {
+    "auth": { "host": "127.0.0.1", "port": 9099 },
+    "firestore": { "host": "127.0.0.1", "port": 8080 },
+    "database": { "host": "127.0.0.1", "port": 9000 },
+    "storage": { "host": "127.0.0.1", "port": 9199 },
+    "hosting": { "host": "127.0.0.1", "port": 5000 },
+    "ui": { "enabled": true, "host": "127.0.0.1", "port": 4000 }
+  },
+  "firestore": { "rules": "emulator/firestore.rules" },
+  "database": { "rules": "emulator/database.rules.json" },
+  "storage": { "rules": "emulator/storage.rules" },
+  "hosting": {
+    "public": "build",
+    "ignore": ["firebase.json", "firebase.emulator.json", "emulator/**", "**/.*", "**/node_modules/**"],
+    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+  }
+}
