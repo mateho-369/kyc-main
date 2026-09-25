@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { FiDownload as Download, FiRotateCw as RotateCw, FiX as X, FiZoomIn as ZoomIn, FiZoomOut as ZoomOut } from 'react-icons/fi';
 import DocumentThumbnail from './DocumentThumbnail';
+import secureApiClient from '../services/SecureApiClient';
 
 /**
  * 画像プレビューモーダルコンポーネント
@@ -60,14 +61,15 @@ const ImagePreviewModal = ({ isOpen, onClose, performerId, performer }) => {
 
   const handleDownload = async () => {
     try {
-      // セキュアAPIクライアント経由でダウンロード
-      const response = await fetch(`https://stg.id-manager.com/api/performers/${performerId}/documents/${selectedDocument}`, {
-        method: 'GET',
-        credentials: 'include'
-      });
-      
-      if (response.ok) {
-        const blob = await response.blob();
+      // 表示（DocumentThumbnail）と同じく、認証付きでアプリの API ベース URL（REACT_APP_API_URL）から取得する。
+      // 以前は https://stg.id-manager.com を直書きしていたので、ローカルでもステージングに取りに行っていた。
+      const response = await secureApiClient.get(
+        `/performers/${performerId}/documents/${selectedDocument}`,
+        { responseType: 'blob' }
+      );
+
+      const blob = response?.data;
+      if (blob) {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
