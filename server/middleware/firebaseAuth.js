@@ -7,84 +7,206 @@ const admin = require('firebase-admin');
 const { FirebaseUser, User } = require('../models');
 const { validateToken } = require('../utils/tokenValidator');
 
-// Firebase Admin SDKの初期化 - DISABLE_FIREBASEチェックを追加
-if (!admin.apps.length && process.env.DISABLE_FIREBASE !== 'true') {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
-    })
-  });
-}
+/**
+ * Firebase Admin SDKを初期化する。
+ *
+ * SharegramのSSOトークンは Sharegram のFirebaseプロジェクト
+ * （例: adroit-standard-496710-r5）が発行する。この初期化が別のプロジェクトの
+ * サービスアカウントで行われていると、verifyIdToken が必ず失敗して
+ * 「Invalid token」になる。設定が不完全なときはサーバー全体を落とさず、
+ * SSOエンドポイントが 503 FIREBASE_NOT_CONFIGURED を返すようにする。
+ *
+ * @returns {boolean} 初期化できたか
+ */
+const initializeFirebaseAdmin = () => {
+  if (admin.apps.length) return true;
+
+  if (process.env.DISABLE_FIREBASE === 'true') {
+    console.warn('Firebase Admin SDK is disabled (DISABLE_FIREBASE=true)');
+    return false;
+  }
+
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+
+  if (!projectId || !clientEmail || !privateKey) {
+    console.error(
+      'Firebase Admin SDK is not configured: FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY are required for Sharegram SSO'
+    );
+    return false;
+  }
+
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert({ projectId, clientEmail, privateKey })
+    });
+    console.log('Firebase Admin SDK initialized for project:', projectId);
+    return true;
+  } catch (error) {
+    console.error('Firebase Admin SDK initialization failed:', error.message);
+    return false;
+  }
+};
+
+initializeFirebaseAdmin();
 
 /**
- * FirebaseトークンからユーザーIDを取得または作成
+ * Firebase認証ユーザー用のランダムパスワードを生成する。
+ *
+ * Firebase SSOユーザーはパスワードでログインしないが、users.password は
+ * NOT NULL かつ beforeCreate フックで bcrypt.hash() されるため、値が無いと
+ * 「Cannot read properties of undefined」でユーザー作成そのものが失敗する。
+ * 推測不能な値を入れておき、パスワードログインは事実上不可能にする。
+ */
+const generateUnusablePassword = () =>
+  `firebase-sso:${require('crypto').randomBytes(32).toString('hex')}`;
+
+/**
+ * FirebaseUsers テーブル（同期用の写し）を更新する。
+ *
+ * このテーブルは Users とアソシエーションが定義されていないため
+ * include は使えない。また写真URL等はバリデーションを持つので、
+ * 書き込みに失敗してもログイン自体は止めない（ログのみ）。
+ */
+const upsertFirebaseUserMapping = async ({ uid, userId, email, name, picture, emailVerified, providerId }) => {
+  try {
+    const values = {
+      userId,
+      email,
+      displayName: name || null,
+      // photoURL は isUrl バリデーションを持つ。Sharegramのavatarは
+      // 暗号化された文字列でURLではないため、URLのときだけ保存する。
+      photoURL: /^https?:\/\//i.test(picture || '') ? picture : null,
+      emailVerified: !!emailVerified,
+      providerId: providerId || null,
+      lastSyncedAt: new Date()
+    };
+
+    const [mapping, created] = await FirebaseUser.findOrCreate({
+      where: { firebaseUid: uid },
+      defaults: { firebaseUid: uid, ...values }
+    });
+
+    if (!created) {
+      await mapping.update({
+        ...values,
+        userId: mapping.userId || userId,
+        displayName: values.displayName || mapping.displayName,
+        photoURL: values.photoURL || mapping.photoURL
+      });
+    }
+
+    return mapping;
+  } catch (error) {
+    console.warn('FirebaseUser mapping could not be saved (login continues):', error.message);
+    return null;
+  }
+};
+
+/**
+ * Firebaseトークンからユーザーを取得または作成する。
+ *
+ * 1. Firebase UID で既存ユーザーを探す
+ * 2. 無ければメールアドレスで探す（Sharegramと同じメールなら同一人物）
+ * 3. それでも無ければ新規作成
+ *
+ * どの経路でも「共有のテストユーザー」を返すことはない。
+ *
  * @param {Object} decodedToken - デコードされたFirebaseトークン
  * @returns {Object} ユーザー情報
  */
 const getOrCreateUserFromFirebase = async (decodedToken) => {
-  const { uid, email, name, picture, email_verified } = decodedToken;
+  const { uid, email, email_verified } = decodedToken;
+  const name = decodedToken.name || decodedToken.displayName || null;
+  const picture = decodedToken.picture || decodedToken.photoURL || null;
+  const providerId = decodedToken.firebase?.sign_in_provider || 'custom';
 
-  // Firebase UIDでユーザーを検索
-  let firebaseUser = await FirebaseUser.findOne({
-    where: { firebaseUid: uid },
-    include: [{ model: User }]
+  let user = await User.findOne({ where: { firebaseUid: uid } });
+  if (!user && email) {
+    user = await User.findOne({ where: { email } });
+  }
+
+  if (user) {
+    await user.update({
+      firebaseUid: uid,
+      lastLoginAt: new Date(),
+      emailVerified: user.emailVerified || !!email_verified
+    });
+    console.log('✅ Firebaseユーザーを既存アカウントに紐付け:', user.id, user.email);
+  } else {
+    user = await User.create({
+      email,
+      name: name || email.split('@')[0],
+      role: 'user',
+      isActive: true,
+      emailVerified: !!email_verified,
+      authProvider: 'firebase',
+      // 次回のSSOで UID から直接引けるようにする（重複アカウント防止）
+      firebaseUid: uid,
+      lastLoginAt: new Date(),
+      // users.password は NOT NULL かつ beforeCreate で bcrypt.hash() される。
+      // 値が無いとユーザー作成そのものが失敗するため、推測不能な値を入れる。
+      password: generateUnusablePassword()
+    });
+    console.log('✅ Firebaseユーザーを新規作成:', user.id, user.email);
+  }
+
+  await upsertFirebaseUserMapping({
+    uid,
+    userId: user.id,
+    email: user.email,
+    name: user.name,
+    picture,
+    emailVerified: email_verified,
+    providerId
   });
 
-  if (firebaseUser && firebaseUser.User) {
-    // 既存ユーザーの情報を更新
-    await firebaseUser.update({
-      email,
-      displayName: name,
-      photoURL: picture,
-      emailVerified: email_verified,
-      lastLoginAt: new Date()
-    });
+  return user;
+};
 
-    return firebaseUser.User;
-  }
+/**
+ * リクエストからFirebase ID Token候補を優先順に取り出す。
+ *
+ * フロントエンドの /sso は SecureApiClient 経由で POST /api/auth/firebase-session
+ * を叩く。axiosのインターセプターが localStorage に残った *ローカル* JWT を
+ * Authorization ヘッダーに付けるため、ヘッダーだけを見るとSharegramが発行した
+ * トークンが隠れてしまい "Invalid token" でSSOが失敗していた。
+ * そこで ボディ → X-Firebase-Token → Authorization → クエリ の順に候補を集め、
+ * Firebaseの検証を通った最初のものを使う。
+ *
+ * @param {Object} req - Expressリクエスト
+ * @returns {Array<{token: string, source: string}>}
+ */
+const extractFirebaseIdTokenCandidates = (req) => {
+  const candidates = [];
 
-  // 新規ユーザーの作成
-  const transaction = await FirebaseUser.sequelize.transaction();
-  
-  try {
-    // メールアドレスで既存ユーザーを検索
-    let user = await User.findOne({ 
-      where: { email },
-      transaction 
-    });
-
-    if (!user) {
-      // 完全に新規のユーザーを作成
-      user = await User.create({
-        email,
-        name: name || email.split('@')[0],
-        role: 'user',
-        isActive: true,
-        password: 'firebase-sso-user' // Firebase認証のため実際のパスワードは不要
-      }, { transaction });
+  const push = (token, source) => {
+    if (typeof token === 'string' && token.trim().length > 0) {
+      const value = token.trim();
+      if (!candidates.some((candidate) => candidate.token === value)) {
+        candidates.push({ token: value, source });
+      }
     }
+  };
 
-    // FirebaseUserレコードを作成
-    firebaseUser = await FirebaseUser.create({
-      firebaseUid: uid,
-      userId: user.id,
-      email,
-      displayName: name,
-      photoURL: picture,
-      emailVerified: email_verified,
-      provider: decodedToken.firebase.sign_in_provider || 'password',
-      lastLoginAt: new Date()
-    }, { transaction });
+  // 1) リクエストボディ（/sso が送る形）
+  push(req.body?.idToken, 'body.idToken');
+  push(req.body?.id_token, 'body.id_token');
 
-    await transaction.commit();
-    return user;
+  // 2) 専用ヘッダー（axiosインターセプターが付与する）
+  push(req.headers?.['x-firebase-token'], 'header.X-Firebase-Token');
 
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
+  // 3) Authorization: Bearer
+  const authHeader = req.headers?.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    push(authHeader.slice('Bearer '.length), 'header.Authorization');
   }
+
+  // 4) クエリパラメータ（後方互換・非推奨）
+  push(req.query?.id_token, 'query.id_token');
+
+  return candidates;
 };
 
 /**
@@ -94,81 +216,55 @@ const getOrCreateUserFromFirebase = async (decodedToken) => {
  */
 const authenticateFirebase = (options = { required: true }) => {
   return async (req, res, next) => {
-    // Firebaseが無効化されている場合はスキップ（開発環境のみ）
-    // 本番で DISABLE_FIREBASE=true になると、全リクエストが認証を通過して
-    // test-uid として扱われる。環境変数1つで認証が消える状態を避けるため、
-    // NODE_ENV=production では絶対にこの分岐に入らないようにする。
-    if (process.env.DISABLE_FIREBASE === 'true') {
-      if (process.env.NODE_ENV === 'production') {
-        console.error('DISABLE_FIREBASE=true is not allowed in production - rejecting request');
-        return res.status(500).json({
+    // Firebaseが未設定のままリクエストを通すと、誰でも test@example.com
+    // （Test User）としてログインできてしまう。開発環境であっても
+    // 「認証済みのふり」をさせるのは危険なので、未設定は明示的に拒否する。
+    if (process.env.DISABLE_FIREBASE === 'true' || !admin.apps.length) {
+      console.error('Firebase Admin SDK is not initialized - rejecting Firebase authentication request');
+      return res.status(503).json({
+        success: false,
+        error: 'Firebase authentication is not configured on this server',
+        code: 'FIREBASE_NOT_CONFIGURED'
+      });
+    }
+
+    const candidates = extractFirebaseIdTokenCandidates(req);
+
+    if (candidates.length === 0) {
+      if (options.required) {
+        return res.status(401).json({
           success: false,
-          error: { code: 'AUTH_MISCONFIGURED', message: '認証設定に問題があります' }
+          error: 'No Firebase ID token provided',
+          code: 'NO_TOKEN'
         });
       }
-      // ダミーのユーザー情報を設定（開発用）
-      req.user = {
-        uid: 'test-uid',
-        email: 'test@example.com',
-        name: 'Test User'
-      };
       return next();
     }
-    
-    try {
-      let idToken = null;
-      
-      // 標準的な方法: Authorizationヘッダーからトークンを取得
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        idToken = authHeader.split('Bearer ')[1];
+
+    if (candidates.some((candidate) => candidate.source === 'query.id_token')) {
+      console.warn('⚠️ URLパラメータでのトークン送信は非推奨です。Authorizationヘッダーを使用してください。');
+    }
+
+    // 候補を順に検証し、SharegramのFirebaseプロジェクトが発行したトークンを
+    // 見つける。全て失敗した場合は最初のエラーをそのまま返す。
+    let decodedToken = null;
+    let firstError = null;
+
+    for (const candidate of candidates) {
+      try {
+        decodedToken = await admin.auth().verifyIdToken(candidate.token, true);
+        req.firebaseTokenSource = candidate.source;
+        break;
+      } catch (error) {
+        if (!firstError) firstError = error;
+        console.warn(
+          `Firebase token from ${candidate.source} was rejected: ${error.code || error.message}`
+        );
       }
-      
-      // 後方互換性: URLパラメータからトークンを取得（非推奨）
-      if (!idToken && req.query.id_token) {
-        console.warn('⚠️ URLパラメータでのトークン送信は非推奨です。Authorizationヘッダーを使用してください。');
-        idToken = req.query.id_token;
-      }
-      
-      if (!idToken) {
-        if (options.required) {
-          return res.status(401).json({
-            success: false,
-            error: 'No authorization token provided',
-            code: 'NO_TOKEN'
-          });
-        }
-        return next();
-      }
+    }
 
-      // トークンを検証（失効チェック付き）
-      const decodedToken = await admin.auth().verifyIdToken(idToken, true);
-
-      // カスタムクレームをチェック（オプション）
-      if (decodedToken.customClaims && decodedToken.customClaims.blocked) {
-        return res.status(403).json({
-          success: false,
-          error: 'User account is blocked'
-        });
-      }
-
-      // ユーザー情報を取得または作成
-      const user = await getOrCreateUserFromFirebase(decodedToken);
-
-      // リクエストオブジェクトにユーザー情報を追加
-      req.user = {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        firebaseUid: decodedToken.uid,
-        isFirebaseAuth: true
-      };
-
-      req.firebaseToken = decodedToken;
-
-      next();
-    } catch (error) {
+    if (!decodedToken) {
+      const error = firstError || new Error('Firebase authentication failed');
       console.error('Firebase authentication error:', error);
 
       if (error.code === 'auth/id-token-expired') {
@@ -195,10 +291,44 @@ const authenticateFirebase = (options = { required: true }) => {
         });
       }
 
-      res.status(401).json({
+      return res.status(401).json({
         success: false,
         error: 'Authentication failed',
         code: 'AUTH_FAILED'
+      });
+    }
+
+    try {
+      // カスタムクレームをチェック（オプション）
+      if (decodedToken.customClaims && decodedToken.customClaims.blocked) {
+        return res.status(403).json({
+          success: false,
+          error: 'User account is blocked'
+        });
+      }
+
+      // ユーザー情報を取得または作成
+      const user = await getOrCreateUserFromFirebase(decodedToken);
+
+      // リクエストオブジェクトにユーザー情報を追加
+      req.user = {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        firebaseUid: decodedToken.uid,
+        isFirebaseAuth: true
+      };
+
+      req.firebaseToken = decodedToken;
+
+      next();
+    } catch (error) {
+      console.error('Firebase user provisioning error:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to provision the authenticated user',
+        code: 'USER_PROVISIONING_FAILED'
       });
     }
   };

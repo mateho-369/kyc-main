@@ -2,6 +2,9 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '10-extend-performer-kyc-fields');
     // Add KYC-specific columns to Performers table
     await queryInterface.addColumn('Performers', 'kycStatus', {
       type: Sequelize.ENUM('not_started', 'in_progress', 'verified', 'rejected', 'expired'),
@@ -81,6 +84,9 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '10-extend-performer-kyc-fields');
     // Remove indexes
     await queryInterface.removeIndex('Performers', 'idx_performers_kyc_status');
     await queryInterface.removeIndex('Performers', 'idx_performers_sharegram_user_id');

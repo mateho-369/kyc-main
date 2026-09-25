@@ -3,7 +3,11 @@ import { FiLogOut as LogOut, FiShield as Shield, FiUser as User, FiBell as Bell,
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-const Header = () => {
+/**
+ * @param {(e: React.MouseEvent) => void} [onToggleNav] - 狭い画面でのサイドバー開閉。
+ *   App.jsx の MainLayout が状態を持つ（Header と Navigation は兄弟なのでここで受ける）。
+ */
+const Header = ({ onToggleNav }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -19,7 +23,13 @@ const Header = () => {
         <div className="flex items-center justify-between">
           {/* Logo & Brand */}
           <div className="flex items-center space-x-4">
-            <button className="lg:hidden p-2 rounded-lg hover:bg-navy-50 text-navy-600">
+            {/* 従来はこのボタンに onClick が無く、モバイルではナビへ到達できなかった */}
+            <button
+              type="button"
+              onClick={onToggleNav}
+              aria-label="メニューを開く"
+              className="lg:hidden p-2 rounded-lg hover:bg-navy-50 text-navy-600"
+            >
               <Menu className="w-5 h-5" />
             </button>
 
@@ -38,10 +48,19 @@ const Header = () => {
 
           {/* Right Side Actions */}
           <div className="flex items-center space-x-4">
-            {/* Notification Bell */}
-            <button className="relative p-2 rounded-xl hover:bg-navy-50 text-navy-500 hover:text-navy-700 transition-colors duration-200">
+            {/*
+              通知：バックエンドに通知API（一覧も未読も）が無いため、
+              未読が有るように見せる金点灯バッジは外した。実装されるまで
+              「未実装」を明示する（点击できない状態で置くより、置かない方が正直）。
+            */}
+            <button
+              type="button"
+              disabled
+              title="通知はまだ実装されていません"
+              aria-label="通知（未実装）"
+              className="relative p-2 rounded-xl text-navy-300 cursor-not-allowed"
+            >
               <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-gold-500 rounded-full"></span>
             </button>
 
             {/* User Info */}

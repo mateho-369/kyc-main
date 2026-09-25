@@ -2,6 +2,9 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '12-extend-sharegram-integration-fields');
     // Add new columns to SharegramIntegrations table
     await queryInterface.addColumn('SharegramIntegrations', 'performerMapping', {
       type: Sequelize.JSON,
@@ -71,6 +74,9 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '12-extend-sharegram-integration-fields');
     // Remove indexes
     await queryInterface.removeIndex('SharegramIntegrations', 'idx_sharegram_integrations_priority');
     await queryInterface.removeIndex('SharegramIntegrations', 'idx_sharegram_integrations_last_error');

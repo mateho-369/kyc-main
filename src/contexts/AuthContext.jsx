@@ -79,6 +79,16 @@ export const AuthProvider = ({ children }) => {
   };
 
   const doLegacyCheck = async () => {
+    // /sso では SSOPage 自身がSharegramのFirebaseトークンを交換してログインする。
+    // ここで並行して /auth/me を確認すると、SSO成功 *後* に401応答が返ってきて
+    // せっかく認証したユーザーを null に戻してしまう（ログイン直後にログアウト
+    // される症状）。SSOページではバックエンド確認をスキップする。
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/sso')) {
+      console.log('⏭️ /sso ではレガシー認証チェックをスキップ（SSOログイン処理中）');
+      setLoading(false);
+      return;
+    }
+
     try {
       const timeoutPromise = new Promise((resolve) => {
         setTimeout(() => resolve(null), 4000);

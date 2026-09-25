@@ -2,6 +2,9 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '01-add-firebase-integration-columns');
     // Usersテーブルへの拡張
     await queryInterface.addColumn('Users', 'firebaseUid', {
       type: Sequelize.STRING(255),
@@ -45,6 +48,9 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '01-add-firebase-integration-columns');
     // インデックスの削除
     await queryInterface.removeIndex('Users', 'idx_users_last_login');
     await queryInterface.removeIndex('Users', 'idx_users_auth_provider');

@@ -32,21 +32,22 @@
     "vitest": "^1.1.0"
   },
   "scripts": {
+    "env:setup": "node scripts/setup-env.js",
     "start": "react-scripts start",
     "build": "react-scripts build",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
-    "test:coverage": "vitest --coverage",
-    "test:integration": "vitest run src/__tests__/integration --config vitest.integration.config.js",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:debug": "playwright test --debug",
-    "test:all": "npm run test && npm run test:integration && npm run test:e2e",
+    "test:all": "npm run test && npm run test:e2e",
     "test:sharegram": "echo 'Running Sharegram login tests...' && npm run test -- --testNamePattern='Sharegram'",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
     "lint:fix": "eslint src --ext .js,.jsx,.ts,.tsx --fix",
     "typecheck": "echo 'TypeScript check skipped - no tsconfig found'",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "emulator": "node -e \"require('fs').mkdirSync('.firebase-data',{recursive:true})\" && firebase emulators:start --config firebase.emulator.json --project demo-kyc-local --import=.firebase-data --export-on-exit=.firebase-data"
   },
   "eslintConfig": {
     "extends": [

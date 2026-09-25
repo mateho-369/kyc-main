@@ -1,0 +1,9 @@
+rules_version = '2';
+// Firebase Emulator 専用（firebase.emulator.json からのみ参照）。本番の storage.rules とは別物で、デプロイされない。
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

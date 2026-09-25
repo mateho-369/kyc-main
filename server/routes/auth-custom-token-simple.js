@@ -14,28 +14,28 @@ try {
   getUser = firebase.getUser;
   logger = firebase.logger;
 } catch (err) {
-  console.log('Firebase disabled, using mock functions');
-  // Mock functions for Firebase disabled mode
-  createCustomToken = async (uid, claims) => `mock_custom_token_${uid}_${Date.now()}`;
-  verifyIdToken = async (token) => ({
-    uid: 'mock_uid_123',
-    email: 'test@example.com',
-    aud: process.env.FIREBASE_PROJECT_ID || 'test-project',
-    iss: `https://securetoken.google.com/${process.env.FIREBASE_PROJECT_ID || 'test-project'}`,
-    exp: Math.floor(Date.now() / 1000) + 3600,
-    iat: Math.floor(Date.now() / 1000)
-  });
-  getUser = async (uid) => ({
-    uid,
-    email: 'test@example.com',
-    displayName: 'Test User',
-    emailVerified: true,
-    disabled: false,
-    metadata: {
-      creationTime: new Date().toISOString(),
-      lastSignInTime: new Date().toISOString()
-    }
-  });
+  // 【重要】かつてここは「Firebase未設定なら mock 関数でログインを通す」
+  // 実装だった。mock の verifyIdToken はどんなトークンでも
+  // {uid:'mock_uid_123', email:'test@example.com'} を返し、getUser は
+  // 'Test User' を返したため、Sharegram 側の /custom-token 呼び出しが
+  // 全員の身元を test@example.com に潰していた。
+  // 未設定のときは「動いているふり」をせず、必ず 503 で失敗させる。
+  console.error(
+    'Firebase Admin SDK の初期化に失敗したため /api/auth/custom-token は利用できません:',
+    err.message
+  );
+
+  const notConfigured = () => {
+    const error = new Error(
+      'Firebase Admin SDK is not configured: FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY are required'
+    );
+    error.code = 'FIREBASE_NOT_CONFIGURED';
+    throw error;
+  };
+
+  createCustomToken = async () => notConfigured();
+  verifyIdToken = async () => notConfigured();
+  getUser = async () => notConfigured();
   logger = {
     info: console.log,
     error: console.error,
@@ -137,11 +137,14 @@ router.post('/custom-token', authenticateSharegramAPIKey, async (req, res) => {
         'auth/user-disabled': 'ShareGram user disabled'
       };
 
-      return res.status(401).json({
+      const status = verifyError.code === 'FIREBASE_NOT_CONFIGURED' ? 503 : 401;
+      return res.status(status).json({
         success: false,
         error: {
           code: verifyError.code || 'ID_TOKEN_VERIFICATION_FAILED',
-          message: errorMap[verifyError.code] || 'ShareGram ID Token verification failed'
+          message: errorMap[verifyError.code] || (status === 503
+            ? 'サーバーのFirebase設定が不完全なため、トークンを検証できません'
+            : 'ShareGram ID Token verification failed')
         }
       });
     }

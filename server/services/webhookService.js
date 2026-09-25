@@ -1,7 +1,6 @@
 const axios = require('axios');
 const crypto = require('crypto');
 const { Webhook, SharegramIntegration } = require('../models');
-const { Op } = require('sequelize');
 
 /**
  * Webhook通知サービス
@@ -16,17 +15,7 @@ class WebhookService {
   async triggerWebhook(eventType, data) {
     try {
       // アクティブなWebhook統合を取得
-      const integrations = await SharegramIntegration.findAll({
-        where: {
-          integrationType: 'webhook',
-          isActive: true,
-          [Op.or]: [
-            { 'configuration.events': { [Op.contains]: [eventType] } },
-            { 'configuration.events': { [Op.contains]: ['*'] } }
-          ]
-        },
-        order: [['priority', 'DESC']]
-      });
+      const integrations = await this.getWebhooksForEvent(eventType);
 
       const results = [];
 
@@ -42,8 +31,9 @@ class WebhookService {
 
       return results;
     } catch (error) {
-      console.error('Webhookトリガーエラー:', error);
-      throw error;
+      // 通知の失敗で承認などの本処理を 500 にしない（呼び出し側は await しているだけ）
+      console.error('Webhookトリガーエラー:', error.message);
+      return [];
     }
   }
 
@@ -173,15 +163,27 @@ class WebhookService {
    * @returns {Array} Webhook統合のリスト
    */
   async getWebhooksForEvent(eventType) {
-    return await SharegramIntegration.findAll({
+    // configuration.events の絞り込みは JS 側で行う。Op.contains は PostgreSQL 専用で、
+    // MySQL では `@>` の構文エラーになり triggerWebhook を呼ぶ API が 500 になっていた。
+    const integrations = await SharegramIntegration.findAll({
       where: {
         integrationType: 'webhook',
-        isActive: true,
-        [Op.or]: [
-          { 'configuration.events': { [Op.contains]: [eventType] } },
-          { 'configuration.events': { [Op.contains]: ['*'] } }
-        ]
+        isActive: true
+      },
+      order: [['priority', 'DESC']]
+    });
+
+    return integrations.filter((integration) => {
+      let configuration = integration.configuration;
+      if (typeof configuration === 'string') {
+        try {
+          configuration = JSON.parse(configuration);
+        } catch (error) {
+          return false;
+        }
       }
+      const events = Array.isArray(configuration && configuration.events) ? configuration.events : [];
+      return events.includes(eventType) || events.includes('*');
     });
   }
 

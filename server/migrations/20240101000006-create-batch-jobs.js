@@ -2,6 +2,9 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '06-create-batch-jobs');
     await queryInterface.createTable('BatchJobs', {
       id: {
         type: Sequelize.INTEGER,
@@ -156,6 +159,9 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '06-create-batch-jobs');
     await queryInterface.dropTable('BatchJobs');
   }
 };

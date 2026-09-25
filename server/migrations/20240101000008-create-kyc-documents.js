@@ -2,6 +2,9 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '08-create-kyc-documents');
     await queryInterface.createTable('KYCDocuments', {
       id: {
         type: Sequelize.INTEGER,
@@ -115,6 +118,9 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
+    const { makeSafe } = require('../utils/migrationGuard');
+    // sync({alter:true}) が先に作っている場合があるので「既存」はスキップする
+    queryInterface = makeSafe(queryInterface, '08-create-kyc-documents');
     await queryInterface.dropTable('KYCDocuments');
   }
 };

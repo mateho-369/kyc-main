@@ -33,7 +33,8 @@ const PerformerDetailPage = () => {
      setImageLoadError(false);
 
      // SecureApiClientを使用して認証付きで画像を取得
-     const response = await secureApiClient.get(`/api/performers/${id}/documents/${documentType}`, {
+     // baseURL（REACT_APP_API_URL）が既に .../api で終わるので、ここに /api を付けると /api/api/... で 404
+     const response = await secureApiClient.get(`/performers/${id}/documents/${documentType}`, {
        responseType: 'blob'
      });
 
@@ -157,7 +158,7 @@ const PerformerDetailPage = () => {
     document.body.removeChild(a);
   } catch (err) {
     console.error('Download error:', err);
-    setError('ダウンロードに失敗しました');
+    setError(err.response?.data?.message || 'ダウンロードに失敗しました');
   }
  };
 
@@ -166,7 +167,7 @@ const PerformerDetailPage = () => {
     await deletePerformer(id);
     navigate('/performers');
   } catch (err) {
-    setError('削除に失敗しました');
+    setError(err.response?.data?.message || '削除に失敗しました');
   }
  };
 
@@ -178,7 +179,9 @@ const PerformerDetailPage = () => {
     const updatedDocs = await getPerformerDocuments(id);
     setDocuments(updatedDocs);
   } catch (err) {
-    setError('確認処理に失敗しました');
+    // 403 の理由（「書類の検証は管理者のみが実行できます。」）をそのまま出す。
+    // 握り潰すと「ボタンが効かない」にしか見えないため。
+    setError(err.response?.data?.message || err.response?.data?.error || '確認処理に失敗しました');
   } finally {
     setVerifyingDoc(null);
   }
@@ -473,6 +476,26 @@ const PerformerDetailPage = () => {
                   >
                     <Download className="h-4 w-4" />
                   </button>
+
+                  {/*
+                    検証（承認）。handleVerify は実装済みなのにどのボタンからも呼ばれて
+                    おらず、管理者でもこの画面から書類を確定できなかった。
+                    API: PUT /api/performers/:id/documents/:type/verify（管理者限定）。
+                  */}
+                  {(userRole === 'admin' || userRole === 'superadmin') && (
+                    <button
+                      onClick={() => handleVerify(doc.type)}
+                      disabled={verifyingDoc === doc.type}
+                      title={doc.status === 'verified' ? '検証済み（再検証）' : 'この書類を検証する'}
+                      className={`p-2.5 rounded-lg transition-all duration-200 ${
+                        doc.status === 'verified'
+                          ? 'text-success-600 hover:bg-success-50'
+                          : 'text-navy-500 hover:text-navy-800 hover:bg-navy-100'
+                      } ${verifyingDoc === doc.type ? 'opacity-50 cursor-wait' : ''}`}
+                    >
+                      <CheckCircle className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>

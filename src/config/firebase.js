@@ -87,12 +87,16 @@ if (shouldInitialize && process.env.REACT_APP_USE_FIREBASE_EMULATOR === 'true') 
   console.log('🔧 Firebase Emulatorモードで起動');
   
   // 認証エミュレータ
-  connectAuthEmulator(auth, 'http://localhost:9099', {
+  const authEmulatorUrl = process.env.REACT_APP_FIREBASE_AUTH_EMULATOR_URL || 'http://127.0.0.1:9099';
+  const firestoreEmulatorUrl = process.env.REACT_APP_FIREBASE_FIRESTORE_EMULATOR_URL || 'http://127.0.0.1:8080';
+  const firestoreUrl = new URL(firestoreEmulatorUrl);
+
+  connectAuthEmulator(auth, authEmulatorUrl, {
     disableWarnings: true
   });
-  
-  // Firestoreエミュレータ
-  connectFirestoreEmulator(db, 'localhost', 8080);
+
+  // Firestore emulator
+  connectFirestoreEmulator(db, firestoreUrl.hostname, Number(firestoreUrl.port || 8080));
 }
 
 // セキュリティ設定

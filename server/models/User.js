@@ -1,36 +1,43 @@
 // DB無効時のダミーモデル
+//
+// 【重要】かつてここは findOne({where:{email:'test@example.com'}}) に対して
+// {id:1, name:'Test User'} を返していた。その結果、Sharegram SSO は
+// 「成功」したように見せかけ、ダッシュボードは常に同じ Test User を表示した。
+// 実データの検証ができないときに偽の身元を返すのは危険なため、
+// ここでは身元を作らず、明示的に失敗させる。
 if (process.env.DISABLE_DB === 'true') {
+  const DISABLED = new Error(
+    'DATABASE_DISABLED: DISABLE_DB=true のためユーザーを永続化できません。'
+    + ' Sharegram SSO には MySQL が必要です（DB接続設定を行い、DISABLE_DB を外して再起動してください）'
+  );
+
   class User {
-    static async findOne(options) {
-      if (options.where?.email === 'test@example.com') {
-        return {
-          id: 1,
-          email: 'test@example.com',
-          name: 'Test User',
-          firebaseUid: 'test-uid',
-          isActive: true,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        };
-      }
+    static async findOne() {
+      // 存在しないユーザーは null を返す（＝SSO側は新規作成を試み、失敗する）
       return null;
     }
 
-    static async create(userData) {
-      return {
-        id: Math.floor(Math.random() * 1000),
-        ...userData,
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
+    static async findAll() {
+      return [];
     }
 
-    static async update(values, options) {
-      return [1];
+    static async count() {
+      return 0;
+    }
+
+    static async create() {
+      throw DISABLED;
+    }
+
+    static async update() {
+      throw DISABLED;
+    }
+
+    static async destroy() {
+      throw DISABLED;
     }
   }
-  
+
   module.exports = User;
 } else {
   const { DataTypes } = require('sequelize');
@@ -79,6 +86,11 @@ const User = sequelize.define('User', {
   emailVerified: {
     type: DataTypes.BOOLEAN,
     defaultValue: false
+  },
+  // Sharegram/Firebase から取得したプロフィール画像（SSOで同期）
+  profilePicture: {
+    type: DataTypes.STRING(512),
+    allowNull: true
   },
   isActive: {
     type: DataTypes.BOOLEAN,

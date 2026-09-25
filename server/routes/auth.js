@@ -379,7 +379,11 @@ router.get('/me', authEnhanced, async (req, res) => {
      createdAt: user.createdAt,
      updatedAt: user.updatedAt,
      isActive: user.isActive,
-     lastLoginAt: user.lastLoginAt
+     lastLoginAt: user.lastLoginAt,
+     // SSOで確定した身元（リロード後にダッシュボードへ同じユーザー名・アイコンを
+     // 復元するために必要。Sharegram SSO では profilePicture が avatar URL）
+     authProvider: user.authProvider,
+     profilePicture: user.profilePicture || null
    });
  } catch (err) {
    console.error("Get user error:", err);

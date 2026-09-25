@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { createPerformer, getPerformerById, updatePerformer } from '../services/performerService';
 import { trackPerformerRegistration, trackDocumentUpload, trackError } from '../services/firebaseAnalytics';
 import { resizeIfNeeded } from '../utils/imageResize';
+import { buildReturnUrl } from '../utils/sharegramReturn';
 
 const AddPerformerPage = () => {
   const navigate = useNavigate();
@@ -354,17 +355,23 @@ const AddPerformerPage = () => {
           stepNumber: 3
         });
 
-        // Sharegram come_back_url があればリダイレクト
+        // Sharegram come_back_url があればリダイレクト。
+        // 値が壊れている（相対パス・javascript: など）場合は、登録成功をエラーに
+        // 見せないために詳細ページへフォールバックする。
         const comeBackUrl = sessionStorage.getItem('sharegram_come_back_url');
-        if (comeBackUrl) {
-          sessionStorage.removeItem('sharegram_come_back_url');
-          const redirectUrl = new URL(decodeURIComponent(comeBackUrl));
-          redirectUrl.searchParams.set('performer_id', newPerformer.id);
-          redirectUrl.searchParams.set('status', 'created');
-          console.log('Sharegramにリダイレクト:', redirectUrl.toString());
-          window.location.href = redirectUrl.toString();
+        sessionStorage.removeItem('sharegram_come_back_url');
+        const returnTo = buildReturnUrl(comeBackUrl, {
+          performer_id: newPerformer?.id,
+          status: 'created'
+        });
+        if (returnTo) {
+          console.log('Sharegramにリダイレクト:', returnTo);
+          window.location.href = returnTo;
         } else {
-          navigate(`/performers/${newPerformer.id}`);
+          if (comeBackUrl) {
+            console.warn('[come_back] 安全なURLとして扱えなかったため詳細ページへ移動します:', comeBackUrl);
+          }
+          navigate(`/performers/${newPerformer?.id ?? ''}`);
         }
       }
     } catch (err) {

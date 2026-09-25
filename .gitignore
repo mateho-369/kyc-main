@@ -87,7 +87,12 @@ docker-compose.override.yml
 # docs/ も同様に、障害対応記録が大半のため allowlist 方式
 /docs/*
 !/docs/API_Reference_Final.md
+# 構造ガイドとクリーンアップ記録は「読んでほしい」側なので明示的に許可
+!/docs/ARCHITECTURE.md
+!/docs/CLEANUP-2026-09-24.md
 !/docs/FIREBASE_SSO_GUIDE.md
+# Sharegram 側の実装者に渡す連携仕様（KYC → Sharegram webhook）
+!/docs/SHAREGRAM_KYC_WEBHOOK.md
 
 # 入れ子の重複ディレクトリ（作業中に紛れ込んだもの）
 /safevideo/
@@ -128,3 +133,18 @@ coverage/
 *serviceAccount*.json
 *service-account*.json
 firebase-adminsdk*.json
+
+# 手元コピペで増える「一応とっておく」ファイル（レビュー対象外・実害ゼロだが
+# 探索コストだけ上げる）。過去分は git 側にある。
+*.backup
+*.backup-*
+*.backup.*
+*.current-broken
+*.fixed.jsx
+*.hotfix.jsx
+*.improved.js
+*.improved.jsx
+
+# Firebase Emulator のローカルデータ（npm run emulator の --export-on-exit 先）。
+# Auth エミュレータのアカウント（メール・UID）が入るのでコミットしない。
+.firebase-data/

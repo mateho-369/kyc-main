@@ -6,7 +6,35 @@ const http = require('http');
 const WebSocket = require('ws');
 // 環境変数ファイルの動的ロード
 const envFile = process.env.NODE_ENV === 'production' ? '.env.production' : '.env';
-require('dotenv').config({ path: path.join(__dirname, envFile) });
+const envPath = path.join(__dirname, envFile);
+require('dotenv').config({ path: envPath });
+
+// Sharegram SSO 用の設定チェック。
+// .env が読めていないだけ（リポジトリ直下に置いてしまった等）で
+// SSO が「Invalid token」になる紛らわしいミスを防ぐため、起動時に
+// 読み込んだファイルと不足変数を必ず出力する。
+(() => {
+  if (!fs.existsSync(envPath)) {
+    console.warn(`[env] ⚠ ${envFile} が見つかりません (${envPath}) - 環境変数なしで起動します`);
+  } else {
+    console.log(`[env] ${envPath} を読み込みました (NODE_ENV=${process.env.NODE_ENV || 'development'})`);
+  }
+
+  const missing = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY']
+    .filter((name) => !process.env[name]);
+  if (missing.length > 0 && process.env.DISABLE_FIREBASE !== 'true') {
+    console.warn(`[env] ⚠ Sharegram SSO 未設定: ${missing.join(', ')} がありません。`);
+    console.warn('[env]   /api/auth/firebase-session は 503 FIREBASE_NOT_CONFIGURED を返します');
+    console.warn('[env]   （Test User でのフォールバックはありません）');
+  }
+  if (process.env.DISABLE_DB === 'true') {
+    console.warn('[env] ⚠ DISABLE_DB=true: DBモックモードのため、SSOユーザーは永続化されません');
+  }
+
+  // KYC → Sharegram の出演者通知（KYC_WEBHOOK_URL / KYC_WEBHOOK_SECRET）
+  const { describeConfig } = require('./services/sharegram/sharegramWebhook');
+  console.log(`[env] Sharegram webhook: ${describeConfig()}`);
+})();
 
 // セキュリティミドルウェアをインポート
 const { forceHTTPS, securityHeaders, secureCORS } = require('./middleware/security');

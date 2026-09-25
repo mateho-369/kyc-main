@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { auth } from '../config/firebase';
+import API_BASE_URL from '../config/apiBase';
 import securityEnhancer from './SecurityEnhancer';
 import mockApiInterceptor from './mockApiService';
 
@@ -29,7 +30,7 @@ class SecureApiClient {
   setupClient() {
     // Axiosインスタンスの作成
     this.client = axios.create({
-      baseURL: process.env.REACT_APP_API_URL || '/api',
+      baseURL: API_BASE_URL, // 一元管理: src/config/apiBase.js
       timeout: 60000, // 60秒に延長（大きな画像ファイル対応）
       withCredentials: true, // Cookie送信を有効化
       headers: {
@@ -352,22 +353,47 @@ class SecureApiClient {
   }
 
   /**
-   * Firebase認証セッションの作成
+   * Firebase認証セッションの作成（Sharegram SSO）
+   *
+   * Firebase ID Tokenはヘッダーとボディの両方で明示的に送る。
+   * リクエストインターセプターは localStorage に残っている *ローカル* JWT を
+   * Authorization に付けるため、以前はそれがSharegramのトークンを隠してしまい、
+   * バックエンドが「Invalid token」(400) を返してSSOが失敗していた。
+   *
+   * @param {string} idToken - Sharegramが発行したFirebase ID Token
    */
   async createFirebaseSession(idToken) {
     try {
+      if (!idToken) {
+        throw new Error('Firebase ID Tokenが指定されていません');
+      }
+
       // セッションが初期化されていない場合は初期化
       if (!this.isInitialized) {
         await this.initializeSession();
       }
 
-      // Firebase ID Tokenをbodyで送信
-      // バックエンドのauth-firebase-standard.jsがreq.body.idTokenを期待
-      const response = await this.client.post('/auth/firebase-session', {
-        idToken: idToken
-      });
+      const response = await this.client.post(
+        '/auth/firebase-session',
+        { idToken },
+        {
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            'X-Firebase-Token': idToken
+          },
+          // SSOのトークン交換で401リフレッシュループに入ると元のトークンを失う
+          _retry: true,
+          _skipInterceptor: true
+        }
+      );
 
       this.csrfToken = response.data.csrfToken;
+
+      // 新しいセッションのトークンを保存（古いものは上書き）
+      if (response.data?.token) {
+        localStorage.setItem('accessToken', response.data.token);
+      }
+
       console.log('✅ Firebaseセッション作成成功');
       return response.data;
     } catch (error) {
