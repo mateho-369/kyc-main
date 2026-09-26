@@ -54,8 +54,8 @@ router.post('/firebase-verify', sanitizeFirebaseRequest, validateFirebaseVerify,
     // Firebase ID Tokenを検証（エラーハンドリング付き）
     let decodedToken;
     try {
-      if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
-        const configError = new Error('Firebase Auth Emulator is forbidden in production');
+      if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+        const configError = new Error('Firebase Auth Emulator is disabled for this KYC SSO setup');
         configError.code = 'FIREBASE_EMULATOR_DISABLED';
         throw configError;
       }
