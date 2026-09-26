@@ -28,6 +28,11 @@ describe('performer owner scoping', () => {
   test('Firebase UID scopes /api/performers to its owner', async () => {
     const r=await request(app).get('/api/performers?user_id=uid-a'); expect(r.status).toBe(200); expect(r.body.data.map(x=>x.id)).toEqual([1]);
   });
+  test('explicit firebase_uid alias resolves only through Firebase UID', async () => {
+    const r = await request(app).get('/api/performers?firebase_uid=uid-b');
+    expect(r.status).toBe(200);
+    expect(r.body.data.map(x => x.id)).toEqual([2]);
+  });
   test('missing owner scope fails closed without leaking rows', async () => {
     const r=await request(app).get('/api/performers'); expect(r.status).toBe(400); expect(JSON.stringify(r.body)).not.toContain('sg-b');
     const s=await request(app).get('/api/sharegram/performers'); expect(s.status).toBe(400); expect(JSON.stringify(s.body)).not.toContain('sg-b');

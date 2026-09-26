@@ -136,10 +136,13 @@ router.get('/', auth, async (req, res) => {
 
     // Shared API-key callers must always specify an owner scope. A Firebase UID takes
     // precedence; otherwise user_id is interpreted as a Sharegram account id.
-    const { status, sort, expiring, search, external_ids, user_id } = req.query;
+    const { status, sort, expiring, search, external_ids, user_id, firebase_uid } = req.query;
+    // firebase_uid is an explicit Firebase-UID alias; user_id supports either
+    // Firebase UID or Sharegram account ID (UID lookup takes precedence).
+    const ownerId = firebase_uid || user_id;
     const sharedCaller = Boolean(req.sharegramAuth) || !req.user?.id;
-    if (sharedCaller && !user_id && !external_ids) {
-      return res.status(400).json({ success: false, message: 'owner scope required: user_id / external_ids' });
+    if (sharedCaller && !ownerId && !external_ids) {
+      return res.status(400).json({ success: false, message: 'owner scope required: user_id / firebase_uid / external_ids' });
     }
     
     // 検索条件の構築
@@ -159,15 +162,16 @@ router.get('/', auth, async (req, res) => {
       };
     }
 
-    // user_id（Firebase UID）によるフィルタリング
-    if (user_id) {
-      // Identifier precedence: exact Firebase UID first, then Sharegram account id.
+    // Explicit firebase_uid only resolves Firebase UIDs. For user_id, try Firebase UID
+    // first and then treat an unknown value as a Sharegram account ID.
+    if (firebase_uid) {
+      const userByFirebase = await User.findOne({ where: { firebaseUid: firebase_uid }, attributes: ['id'] });
+      if (!userByFirebase) return res.json({ success: true, data: [] });
+      whereClause.userId = userByFirebase.id;
+    } else if (user_id) {
       const userByFirebase = await User.findOne({ where: { firebaseUid: user_id }, attributes: ['id'] });
-      if (userByFirebase) {
-        whereClause.userId = userByFirebase.id;
-      } else {
-        whereClause.sharegramUserId = user_id;
-      }
+      if (userByFirebase) whereClause.userId = userByFirebase.id;
+      else whereClause.sharegramUserId = user_id;
     }
 
     // 期限切れ間近の書類フィルタリング
