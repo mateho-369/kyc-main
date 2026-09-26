@@ -51,11 +51,7 @@ const firebaseConfig = {
 };
 
 // Firebase初期化前の検証
-const emulatorRequested = process.env.REACT_APP_USE_FIREBASE_EMULATOR === 'true';
-if (emulatorRequested) {
-  console.error('This KYC SSO configuration uses real Firebase only; remove REACT_APP_USE_FIREBASE_EMULATOR from the frontend env.');
-}
-const shouldInitialize = !emulatorRequested && validateEnvironment();
+const shouldInitialize = validateEnvironment();
 
 let app = null;
 let auth = null;

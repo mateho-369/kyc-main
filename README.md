@@ -75,7 +75,7 @@ cd server && npm run db:setup  # migrate (schema from zero) + seed (accounts + d
 Use one dedicated Firebase project for local Sharegram and KYC testing. Do not use the Firebase Emulator for this SSO flow.
 
 1. Create/register a Firebase project and Web App for testing. Enable the authentication provider(s) Sharegram uses.
-2. Copy that project's Web App values into the KYC frontend `.env.local` using `.env.development.template` as a guide. Set `REACT_APP_USE_FIREBASE_EMULATOR=false` and keep the API URL pointed at the local KYC API.
+2. Copy that project's Web App values into the KYC frontend `.env.local` using `.env.development.template` as a guide, and keep the API URL pointed at the local KYC API. No frontend emulator toggle is used.
 3. Configure the KYC API's local `server/.env` with the same `FIREBASE_PROJECT_ID` and that project's service-account credentials. **Do not set** `FIREBASE_AUTH_EMULATOR_HOST` or `FIRESTORE_EMULATOR_HOST`.
 4. Configure Sharegram's Firebase Web App and backend service account to the exact same project. Start the Sharegram API before testing login; its custom-token sign-in must complete so the browser can send a real Firebase ID token to KYC.
 5. Restart both frontend dev servers after changing env files. Never commit `.env.local`, `server/.env`, or service-account keys.
