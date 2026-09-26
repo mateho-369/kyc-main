@@ -78,8 +78,7 @@ npm run emulator   # Auth 9099 / Firestore 8080 / RTDB 9000 / Storage 9199 / Hos
 
 - Uses `firebase.emulator.json` and the deny-all rules in `emulator/`. `firebase.json` and the
   root `*.rules` files are the deploy config and are not touched by the emulator.
-- Accounts persist in `.firebase-data/` (git-ignored). When moving to a new checkout, copy that
-  folder too: KYC users are linked by Firebase UID, and a re-created emulator account gets a new UID.
+- Accounts persist in `../firebase-data/` beside the KYC checkout (for example, `shargram-kyc/firebase-data/`). `npm run emulator` creates this folder only if it does not exist, imports its saved data, and exports updates there when the emulator exits. Existing data is preserved; do not delete it if you need the emulator accounts/UIDs.
 - Enable it on the frontend with `REACT_APP_USE_FIREBASE_EMULATOR=true` and on the API with
   `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` (project id `demo-kyc-local` on both).
 - Sending performers to Sharegram: [`docs/SHAREGRAM_KYC_WEBHOOK.md`](docs/SHAREGRAM_KYC_WEBHOOK.md).
