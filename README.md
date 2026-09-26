@@ -83,6 +83,8 @@ npm run emulator   # Auth 9099 / Firestore 8080 / RTDB 9000 / Storage 9199 / Hos
 - Enable it on the frontend with `REACT_APP_USE_FIREBASE_EMULATOR=true` and on the API with
   `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` (project id `demo-kyc-local` on both).
 - Sending performers to Sharegram: [`docs/SHAREGRAM_KYC_WEBHOOK.md`](docs/SHAREGRAM_KYC_WEBHOOK.md).
+- Receiving users from Sharegram (`/sso?token=...`): the URL the Sharegram side must build and
+  the checks when it does not work — [`docs/SHAREGRAM_SSO_HANDOFF.md`](docs/SHAREGRAM_SSO_HANDOFF.md).
 
 ### Read this first
 
@@ -353,6 +355,7 @@ The deployment is deliberately simple, and the following are not in place:
 
 - [docs/API_Reference_Final.md](docs/API_Reference_Final.md)
 - [docs/FIREBASE_SSO_GUIDE.md](docs/FIREBASE_SSO_GUIDE.md)
+- [docs/SHAREGRAM_SSO_HANDOFF.md](docs/SHAREGRAM_SSO_HANDOFF.md)
 - [API_DOCUMENTATION_SHAREGRAM.md](API_DOCUMENTATION_SHAREGRAM.md)
 
 ## License

@@ -16,6 +16,18 @@ export const AuthProvider = ({ children }) => {
   const authStateChangeCallbacks = useRef([]);
   const forceEndLoadingTimer = useRef(null);
   const unsubscribe = useRef(null);
+  // event handler はマウント時に一度だけ登録されるため、中の state は
+  // 「初期値」で固定されてしまう（下の handleAuthLogout のコメント参照）。
+  const isAuthenticatedRef = useRef(false);
+  const userRef = useRef(null);
+
+  useEffect(() => {
+    isAuthenticatedRef.current = isAuthenticated;
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   const onAuthStateChange = (callback) => {
     authStateChangeCallbacks.current.push(callback);
@@ -129,23 +141,33 @@ export const AuthProvider = ({ children }) => {
 
     const handleAuthLogout = (event) => {
       console.log('🚪 認証エラーイベント受信:', event.detail);
-      if (window.location.pathname.includes('/login')) return;
-      if (event.detail?.reason === 'session_expired' && (isAuthenticated || user)) {
-        setAuthNone();
-        setTimeout(() => {
-          if (!window.location.pathname.includes('/login')) {
-            window.location.href = '/login?reason=session_expired';
-          }
-        }, 300);
-      }
-      if (event.detail?.reason === 'refresh_token_expired' && isAuthenticated) {
-        setAuthNone();
-        setTimeout(() => {
-          if (!window.location.pathname.includes('/login')) {
-            window.location.href = '/login?reason=token_expired';
-          }
-        }, 300);
-      }
+      const currentPath = window.location.pathname;
+      // /login（これからログインする）と /sso（Sharegramから受け取る）では
+      // 遷移させない。ここで飛ばすとループになる。
+      if (currentPath.includes('/login') || currentPath.startsWith('/sso')) return;
+
+      const reason = event.detail?.reason;
+      // このハンドラは useEffect([]) で一度だけ登録されるため、クロージャの
+      // isAuthenticated / user は常に初期値（false / null）だった。そのため
+      // 失効イベントを受けてもログイン画面へ戻らず、保護ページに留まって
+      // 401 を出し続けていた。ref で現在値を参照する。
+      const wasAuthenticated = isAuthenticatedRef.current || !!userRef.current;
+
+      if (reason !== 'session_expired' && reason !== 'refresh_token_expired') return;
+
+      setAuthNone();
+
+      // 未認証のまま公開ページを見ているだけの人をログイン画面へ飛ばさない
+      // （保護ページのリダイレクトは ProtectedRoute の役割）。
+      if (!wasAuthenticated) return;
+
+      setTimeout(() => {
+        if (!window.location.pathname.includes('/login')) {
+          window.location.href = reason === 'refresh_token_expired'
+            ? '/login?reason=token_expired'
+            : '/login?reason=session_expired';
+        }
+      }, 300);
     };
     window.addEventListener('auth:logout', handleAuthLogout);
 

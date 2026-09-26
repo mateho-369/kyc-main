@@ -3,6 +3,7 @@ import { auth } from '../config/firebase';
 import API_BASE_URL from '../config/apiBase';
 import securityEnhancer from './SecurityEnhancer';
 import mockApiInterceptor from './mockApiService';
+import { getAccessToken, setAccessToken, clearAccessToken } from '../utils/authToken';
 
 /**
  * セキュアなAPIクライアント（改善版）
@@ -23,6 +24,9 @@ class SecureApiClient {
     this._refreshing = false; // リフレッシュ中フラグ
     this._authRetryCount = 0; // 認証リトライ回数カウンタ
     this._maxAuthRetries = 3; // 最大認証リトライ回数
+    this._handlingAuthError = false; // 認証エラー処理中フラグ
+    this._lastAuthErrorAt = 0; // 直近の認証エラー通知時刻（連続発火の抑止）
+    this._authErrorCooldownMs = 10000; // 同じ失効で 401 の嵐にしないための抑止時間
     
     this.setupClient();
   }
@@ -49,7 +53,9 @@ class SecureApiClient {
 
         // localStorageからアクセストークンを取得してAuthorizationヘッダーに追加
         // Cookie送信問題の回避策として、明示的にヘッダーで送信
-        const accessToken = localStorage.getItem('accessToken');
+        // （キー名は utils/authToken.js に一元化。'token' に書くクライアントが
+        //   あったため、リフレッシュ成功後も 401 が続く不具合があった）
+        const accessToken = getAccessToken();
         if (accessToken && !config.headers['Authorization']) {
           config.headers['Authorization'] = `Bearer ${accessToken}`;
         }
@@ -127,6 +133,13 @@ class SecureApiClient {
           });
           
           originalRequest._retry = true;
+
+          // 直前に認証失効を処理済みなら、並行して飛んでいる残りのリクエストは
+          // 再試行しない（以前は画面内の全リクエストが一斉にリフレッシュを試み、
+          // 401 とセッション初期化が連続する「401の嵐」になっていた）。
+          if (Date.now() - this._lastAuthErrorAt < this._authErrorCooldownMs) {
+            return Promise.reject(error);
+          }
 
           // 認証リトライ回数制限チェック
           if (this._authRetryCount >= this._maxAuthRetries) {
@@ -391,7 +404,7 @@ class SecureApiClient {
 
       // 新しいセッションのトークンを保存（古いものは上書き）
       if (response.data?.token) {
-        localStorage.setItem('accessToken', response.data.token);
+        setAccessToken(response.data.token);
       }
 
       console.log('✅ Firebaseセッション作成成功');
@@ -413,6 +426,7 @@ class SecureApiClient {
       this.csrfToken = null;
       this.isInitialized = false;
       this.firstRequestMade = false;
+      clearAccessToken();
       
       console.log('✅ ログアウトしました');
     } catch (error) {
@@ -421,6 +435,7 @@ class SecureApiClient {
       this.csrfToken = null;
       this.isInitialized = false;
       this.firstRequestMade = false;
+      clearAccessToken();
     }
   }
 
@@ -433,8 +448,25 @@ class SecureApiClient {
       console.log('🔒 認証エラーハンドリング中、スキップします');
       return;
     }
-    
+
+    // /login と /sso は「これから認証する」画面なので、そこで失効イベントを
+    // 投げてもリダイレクトループになるだけ。SSOPage 自身がエラーを表示する。
+    const path = typeof window !== 'undefined' ? window.location.pathname : '';
+    if (path.includes('/login') || path.startsWith('/sso')) {
+      console.log('🔒 認証画面のため auth:logout の通知をスキップ:', path);
+      return;
+    }
+
+    // 同じ失効で何度もイベントを投げない（多重リダイレクト防止）
+    if (Date.now() - this._lastAuthErrorAt < this._authErrorCooldownMs) {
+      console.log('🔒 直前に認証エラーを処理済み、スキップします');
+      return;
+    }
+    this._lastAuthErrorAt = Date.now();
     this._handlingAuthError = true;
+
+    // 失効したトークンは残さない（残すと全リクエストが 401 を繰り返す）
+    clearAccessToken();
     
     console.log('🚨 認証エラーハンドリング開始:', {
       csrfToken: !!this.csrfToken,

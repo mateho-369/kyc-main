@@ -1,5 +1,6 @@
 import axios from 'axios';
 import API_URL from '../config/apiBase';
+import { setAccessToken, clearAccessToken } from '../utils/authToken';
 
 // ベース URL は src/config/apiBase.js で一元決定している（このファイルで
 // 独自デフォルトを持たないこと。以前は localhost:5002 が既定で、
@@ -87,8 +88,10 @@ api.interceptors.response.use(
         });
 
         if (response.data.accessToken) {
-          // 新しいトークンを保存
-          localStorage.setItem('token', response.data.accessToken);
+          // 新しいトークンを保存。
+          // 以前は 'token' キーに書いていたが、SecureApiClient など他のクライアントは
+          // 'accessToken' を読むため、リフレッシュ成功後も 401 が続いていた。
+          setAccessToken(response.data.accessToken);
           api.defaults.headers.common['Authorization'] = `Bearer ${response.data.accessToken}`;
           
           processQueue(null, response.data.accessToken);
@@ -102,10 +105,12 @@ api.interceptors.response.use(
         processQueue(refreshError, null);
         isRefreshing = false;
         
-        // リフレッシュも失敗し、かつログインページ以外の場合のみログアウト
-        if (refreshError.response?.status === 401 && !window.location.pathname.includes('/login')) {
+        // リフレッシュも失敗し、かつログイン/Ssoページ以外の場合のみログアウト
+        if (refreshError.response?.status === 401
+            && !window.location.pathname.includes('/login')
+            && !window.location.pathname.startsWith('/sso')) {
           // トークンをクリア
-          localStorage.removeItem('token');
+          clearAccessToken();
           
           // カスタムイベントを発火してAuthContextに通知（遅延実行で無限ループ防止）
           setTimeout(() => {

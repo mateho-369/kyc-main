@@ -2,6 +2,9 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { createFirebaseSession } from '../services/auth';
+import { auth } from '../config/firebase';
+import { clearAccessToken, setAccessToken } from '../utils/authToken';
+import { extractSsoToken } from '../utils/ssoToken';
 // come_back の解錠・安全性判定は utils/sharegramReturn.js（登録画面と共通）
 import { decodeComeBackUrl, isSafeReturnUrl } from '../utils/sharegramReturn';
 
@@ -14,15 +17,21 @@ import { decodeComeBackUrl, isSafeReturnUrl } from '../utils/sharegramReturn';
  * URL例: /sso?token={Firebase_ID_Token}&action=create&performer_id=123&come_back_url=https://...
  *
  * パラメータ:
- * - token: Firebase ID Token（必須）
+ * - token: Firebase ID Token（必須。id_token などの別名、URLハッシュも許容）
  * - action: 操作種別 - create（新規作成）または edit（編集）（必須）
  * - performer_id: 出演者ID（action=editの場合は必須）
  * - come_back_url: 操作完了後のSharegramへの戻り先URL（オプション）
+ *
+ * token が無い場合の挙動:
+ *   1. 同じブラウザで Firebase にサインイン済みなら、その ID Token を使う
+ *      （Sharegram 側で既にサインインしているケースの救済）
+ *   2. それも無ければ「Sharegram から token が届いていない」と明示して止める
+ *      （以前は原因が分からないまま認証エラー画面になっていた）
  */
 const SSOPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, isAuthenticated, setUser, setIsAuthenticated, checkAuth } = useAuth();
+  const { isAuthenticated, setUser, setIsAuthenticated } = useAuth();
 
   const [status, setStatus] = useState('processing'); // processing, success, error
   const [errorMessage, setErrorMessage] = useState('');
@@ -36,8 +45,7 @@ const SSOPage = () => {
 
     const processSSO = async () => {
       try {
-        // URLパラメータを取得
-        const token = searchParams.get('token');
+        // --- URL パラメータ -------------------------------------------------
         const action = searchParams.get('action');
         const performerId = searchParams.get('performer_id');
         // Sharegram historically sent both spellings. Accept both so the SSO
@@ -46,10 +54,34 @@ const SSOPage = () => {
           searchParams.get('come_back_url') || searchParams.get('come_back')
         );
 
-        // デバッグ情報を保存
+        // token はクエリ・ハッシュ・別名のいずれでも受け取る（utils/ssoToken.js）
+        const tokenLookup = extractSsoToken({
+          search: typeof window !== 'undefined' ? window.location.search : '',
+          hash: typeof window !== 'undefined' ? window.location.hash : ''
+        });
+
+        let token = tokenLookup.token;
+        let tokenSource = token ? tokenLookup.source : null;
+
+        // URL に token が無い場合は、このブラウザの Firebase セッションを使えるか試す
+        if (!token && auth?.currentUser) {
+          try {
+            console.log('🔁 URLにtokenが無いためFirebaseの現在ユーザーからID Tokenを取得します');
+            token = await auth.currentUser.getIdToken();
+            tokenSource = 'firebase';
+          } catch (firebaseError) {
+            console.warn('Firebase ID Tokenの取得に失敗:', firebaseError.message);
+          }
+        }
+
+        // デバッグ情報を保存（値そのものは出さない）
         setDebugInfo({
           hasToken: !!token,
           tokenLength: token?.length || 0,
+          tokenSource,
+          tokenParamName: tokenLookup.paramName,
+          tokenProblem: tokenLookup.reason,
+          receivedParamNames: tokenLookup.receivedParamNames,
           action,
           performerId,
           hasComeBackUrl: !!comeBackUrl
@@ -57,14 +89,43 @@ const SSOPage = () => {
 
         console.log('SSO認証開始:', {
           hasToken: !!token,
+          tokenSource,
           action,
           performerId,
           hasComeBackUrl: !!comeBackUrl
         });
 
-        // 必須パラメータの検証
+        // --- 後続画面のために引き継ぐ（検証より先に保存する） ------------------
+        // 認証に失敗してこの画面に留まっても、「Sharegramに戻る」で戻れるよう、
+        // エラー表示より前に保存しておく。
+        if (comeBackUrl) {
+          try {
+            sessionStorage.setItem('sharegram_come_back_url', comeBackUrl);
+            console.log('come_back_urlを保存:', comeBackUrl);
+          } catch (e) {
+            console.warn('セッションストレージへの保存に失敗:', e);
+          }
+        }
+
+        if (action) {
+          sessionStorage.setItem('sharegram_action', action);
+        }
+        if (performerId) {
+          sessionStorage.setItem('sharegram_performer_id', performerId);
+        }
+
+        // --- 必須パラメータの検証 -------------------------------------------
         if (!token) {
-          throw new Error('Firebase ID Tokenが指定されていません。');
+          if (tokenLookup.reason === 'malformed') {
+            throw new Error(
+              'tokenパラメータの値がFirebase ID Tokenの形式ではありません（"undefined" や空文字が渡されていませんか）。'
+              + ' Sharegram側でトークン取得後に改めて開き直してください。'
+            );
+          }
+          throw new Error(
+            'SharegramからFirebase ID Token（tokenパラメータ）が送られていません。'
+            + ' Sharegram側の「本人確認を開始」から開き直すか、下の「ログイン画面へ」から直接ログインしてください。'
+          );
         }
 
         if (!action || !['create', 'edit'].includes(action)) {
@@ -75,28 +136,13 @@ const SSOPage = () => {
           throw new Error('編集モードではperformer_idが必須です。');
         }
 
-        // come_back_urlをセッションストレージに保存（後で使用）
-        if (comeBackUrl) {
-          try {
-            sessionStorage.setItem('sharegram_come_back_url', comeBackUrl);
-            console.log('come_back_urlを保存:', comeBackUrl);
-          } catch (e) {
-            console.warn('セッションストレージへの保存に失敗:', e);
-          }
-        }
-
-        // actionとperformer_idも保存（後の画面で使用）
-        sessionStorage.setItem('sharegram_action', action);
-        if (performerId) {
-          sessionStorage.setItem('sharegram_performer_id', performerId);
-        }
-
         // 前回のログインで残ったローカルJWTを破棄する。
         // 残したままだと axios のインターセプターが Authorization に付け、
         // Sharegramのトークンより優先されて「Invalid token」になる。
-        localStorage.removeItem('accessToken');
+        // （URLのtokenを最優先で使うため、交換の直前にだけ消す）
+        clearAccessToken();
 
-        // Firebase ID Tokenの検証とセッション作成
+        // --- Firebase ID Tokenの検証とセッション作成 ------------------------
         console.log('Firebase ID Token検証開始...');
 
         try {
@@ -108,7 +154,7 @@ const SSOPage = () => {
           if (sessionResponse?.user) {
             // トークンをlocalStorageに保存（APIリクエストで使用）
             if (sessionResponse.token) {
-              localStorage.setItem('accessToken', sessionResponse.token);
+              setAccessToken(sessionResponse.token);
               console.log('✅ Access tokenをlocalStorageに保存');
             }
 
@@ -123,26 +169,26 @@ const SSOPage = () => {
           console.error('Firebaseセッション作成エラー:', sessionError);
 
           // エラーメッセージを詳細化
-          const status = sessionError.response?.status;
+          const httpStatus = sessionError.response?.status;
           const code = sessionError.response?.data?.code
             || sessionError.response?.data?.error?.code;
 
-          if (status === 401 && code === 'TOKEN_EXPIRED') {
+          if (httpStatus === 401 && code === 'TOKEN_EXPIRED') {
             throw new Error('Firebase ID Tokenの有効期限が切れています。Sharegramから再度ログインしてください。');
-          } else if (status === 401) {
+          } else if (httpStatus === 401) {
             throw new Error('Firebase ID Tokenが無効または期限切れです。Sharegramから再度ログインしてください。');
-          } else if (status === 400) {
+          } else if (httpStatus === 400) {
             throw new Error('Firebase ID Tokenを解釈できませんでした。SharegramのFirebaseプロジェクトとサーバー設定（FIREBASE_PROJECT_ID）が一致しているか確認してください。');
-          } else if (status === 503) {
+          } else if (httpStatus === 503) {
             throw new Error('サーバーのFirebase設定が不完全です（FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY）。');
-          } else if (status === 429) {
+          } else if (httpStatus === 429) {
             throw new Error('ログイン試行が多すぎます。少し待ってから再試行してください。');
           } else {
             throw new Error(`認証処理中にエラーが発生しました: ${sessionError.message || '不明なエラー'}`);
           }
         }
 
-        // 認証成功
+        // --- 認証成功 -------------------------------------------------------
         setStatus('success');
         console.log('SSO認証成功、リダイレクト準備中...');
 
@@ -150,7 +196,7 @@ const SSOPage = () => {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         // actionに応じたリダイレクト先を決定
-        let redirectPath;
+        let redirectPath = '/';
         if (action === 'create') {
           redirectPath = '/performers/add';
           console.log('新規登録画面へリダイレクト:', redirectPath);
@@ -170,7 +216,7 @@ const SSOPage = () => {
     };
 
     processSSO();
-  }, [searchParams, navigate, login]);
+  }, [searchParams, navigate, setUser, setIsAuthenticated]);
 
   // エラー時のSharegramへ戻るハンドラ
   /**
@@ -197,6 +243,10 @@ const SSOPage = () => {
     setStatus('processing');
     setErrorMessage('');
     window.location.reload();
+  };
+
+  const handleGoToLogin = () => {
+    navigate('/login', { replace: true });
   };
 
   return (
@@ -254,6 +304,12 @@ const SSOPage = () => {
                   className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
                   再試行
+                </button>
+                <button
+                  onClick={handleGoToLogin}
+                  className="w-full py-2 px-4 border border-blue-300 rounded-md shadow-sm text-sm font-medium text-blue-700 bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  ログイン画面へ
                 </button>
                 <button
                   onClick={handleReturnToSharegram}
