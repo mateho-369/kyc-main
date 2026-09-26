@@ -29,23 +29,6 @@ export const TOKEN_PARAM_NAMES = [
 ];
 
 const REJECTED_LITERALS = ['undefined', 'null', 'none', 'false', 'true'];
-const decodeJwtJsonSegment = (segment) => {
-  try {
-    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
-    const decoded = typeof atob === 'function'
-      ? atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='))
-      : Buffer.from(base64, 'base64').toString('utf8');
-    return JSON.parse(decoded);
-  } catch (error) {
-    return null;
-  }
-};
-
-const isLocalFirebaseEmulator = (header, payload) => {
-  const localHost = typeof window !== 'undefined'
-    && ['localhost', '127.0.0.1', '::1'].includes(window.location?.hostname);
-  return localHost && header?.alg === 'none' && payload?.aud === 'demo-kyc-local';
-};
 
 /**
  * Firebase ID Token（＝JWT）らしい形か。
@@ -57,23 +40,9 @@ export function looksLikeJwt(value) {
   const trimmed = value.trim();
   if (trimmed.length < 20) return false;
   if (REJECTED_LITERALS.includes(trimmed.toLowerCase())) return false;
-  const signedJwt = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(trimmed);
-  if (signedJwt) return true;
-
-  // The Firebase Auth Emulator can issue unsigned ID-token-shaped JWTs (alg:none,
-  // empty signature). Accept only when emulator mode is explicitly enabled outside
-  // production, or when this is a loopback page and the payload names our demo project.
-  // The API server still performs authoritative token verification.
-  const emulatorMode = typeof process !== 'undefined'
-    && process.env.NODE_ENV !== 'production'
-    && process.env.REACT_APP_USE_FIREBASE_EMULATOR === 'true';
-  const unsignedMatch = trimmed.match(/^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.$/);
-  if (!unsignedMatch) return false;
-  if (emulatorMode) return true;
-  return isLocalFirebaseEmulator(
-    decodeJwtJsonSegment(unsignedMatch[1]),
-    decodeJwtJsonSegment(unsignedMatch[2])
-  );
+  // This integration uses real Firebase only: require the three non-empty JWT
+  // segments produced by Firebase Auth; emulator/alg:none tokens are rejected.
+  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(trimmed);
 }
 
 const safeDecode = (value) => {

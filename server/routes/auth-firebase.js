@@ -15,8 +15,8 @@ const asyncHandler = require('../utils/asyncHandler');
 // Firebase Admin SDK初期化（エラーハンドリング強化）
 const initializeFirebase = () => {
   try {
-    if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
-      console.error('Firebase Auth Emulator is forbidden in production.');
+    if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+      console.error('Firebase Auth Emulator is disabled for this KYC SSO setup.');
       return false;
     }
     if (!admin.apps.length) {
@@ -56,7 +56,7 @@ router.post('/firebase-verify', sanitizeFirebaseRequest, validateFirebaseVerify,
     try {
       if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
         const configError = new Error('Firebase Auth Emulator is forbidden in production');
-        configError.code = 'FIREBASE_EMULATOR_FORBIDDEN';
+        configError.code = 'FIREBASE_EMULATOR_DISABLED';
         throw configError;
       }
       if (!admin.apps.length) {
@@ -71,7 +71,7 @@ router.post('/firebase-verify', sanitizeFirebaseRequest, validateFirebaseVerify,
 
       decodedToken = await admin.auth().verifyIdToken(id_token);
     } catch (error) {
-      if (error.code === 'FIREBASE_NOT_CONFIGURED' || error.code === 'FIREBASE_EMULATOR_FORBIDDEN') {
+      if (error.code === 'FIREBASE_NOT_CONFIGURED' || error.code === 'FIREBASE_EMULATOR_DISABLED') {
         console.error('Firebase設定により検証を拒否しました:', error.message);
         return res.status(503).json({
           success: false,
@@ -224,8 +224,8 @@ router.get('/firebase-sso', sanitizeFirebaseRequest, validateFirebaseSSOQuery, a
     const { id_token, redirect_url } = req.validatedQuery;
 
     // ID Tokenを検証 (checkRevoked=true で失効チェック)
-    if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
-      return res.status(503).json({ success: false, error: 'Firebase Auth Emulator is forbidden in production', code: 'FIREBASE_EMULATOR_FORBIDDEN' });
+    if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+      return res.status(503).json({ success: false, error: 'Firebase Auth Emulator is disabled for this KYC SSO setup', code: 'FIREBASE_EMULATOR_DISABLED' });
     }
     let decodedToken;
     try {

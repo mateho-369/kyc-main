@@ -19,10 +19,10 @@ const { validateToken } = require('../utils/tokenValidator');
  * @returns {boolean} 初期化できたか
  */
 const initializeFirebaseAdmin = () => {
-  // Firebase Admin SDK trusts unsigned emulator tokens when this variable is set.
-  // Never initialize/verify via the emulator in production, even if an app exists.
-  if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
-    console.error('Firebase Auth Emulator is forbidden in production; refusing Firebase authentication.');
+  // This Sharegram/KYC SSO setup uses real Firebase only. The Admin SDK trusts
+  // emulator tokens when this variable is set, so reject emulator configuration.
+  if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    console.error('Firebase Auth Emulator is disabled for this KYC SSO setup; refusing Firebase authentication.');
     return false;
   }
   if (admin.apps.length) return true;
@@ -243,11 +243,11 @@ const extractFirebaseIdTokenCandidates = (req) => {
  */
 const authenticateFirebase = (options = { required: true }) => {
   return async (req, res, next) => {
-    if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
       return res.status(503).json({
         success: false,
-        error: 'Firebase Auth Emulator is forbidden in production',
-        code: 'FIREBASE_EMULATOR_FORBIDDEN'
+        error: 'Firebase Auth Emulator is disabled for this KYC SSO setup; remove FIREBASE_AUTH_EMULATOR_HOST.',
+        code: 'FIREBASE_EMULATOR_DISABLED'
       });
     }
 
