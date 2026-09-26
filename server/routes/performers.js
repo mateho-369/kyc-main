@@ -21,6 +21,16 @@ const DOCUMENT_TYPE_ALIASES = {
   selfie_with_id: 'selfieWithId'
 };
 const normalizeDocumentType = (type) => DOCUMENT_TYPE_ALIASES[type] || type;
+const sameId = (a, b) => a != null && b != null && Number(a) === Number(b);
+const canAccessPerformer = (req, performer) => {
+  if (req.user?.role === 'user') return sameId(performer.userId, req.user.id);
+  // API-key callers must carry a scope; JWT admins retain their administrative access.
+  if (!req.user?.id || req.sharegramAuth) {
+    const scope = req.query?.user_id || req.get?.('x-sharegram-user-id');
+    return Boolean(scope) && (String(scope) === String(performer.sharegramUserId) || sameId(scope, performer.userId));
+  }
+  return req.user.role === 'admin';
+};
 
 // documents は JSON カラム。MySQL はオブジェクト、MariaDB などでは文字列で返るので両対応する。
 const toDocumentsObject = (value) => {
@@ -124,8 +134,16 @@ router.get('/', auth, async (req, res) => {
       });
     }
 
-    // クエリパラメータの取得
-    const { status, sort, expiring, search, external_ids, user_id } = req.query;
+    // Shared API-key callers must always specify an owner scope. A Firebase UID takes
+    // precedence; otherwise user_id is interpreted as a Sharegram account id.
+    const { status, sort, expiring, search, external_ids, user_id, firebase_uid } = req.query;
+    // firebase_uid is an explicit Firebase-UID alias; user_id supports either
+    // Firebase UID or Sharegram account ID (UID lookup takes precedence).
+    const ownerId = firebase_uid || user_id;
+    const sharedCaller = Boolean(req.sharegramAuth) || !req.user?.id;
+    if (sharedCaller && !ownerId && !external_ids) {
+      return res.status(400).json({ success: false, message: 'owner scope required: user_id / firebase_uid / external_ids' });
+    }
     
     // 検索条件の構築
     const whereClause = {};
@@ -144,17 +162,16 @@ router.get('/', auth, async (req, res) => {
       };
     }
 
-    // user_id（Firebase UID）によるフィルタリング
-    if (user_id) {
-      const userByFirebase = await User.findOne({
-        where: { firebaseUid: user_id },
-        attributes: ['id']
-      });
-      if (userByFirebase) {
-        whereClause.userId = userByFirebase.id;
-      } else {
-        return res.json({ success: true, data: [] });
-      }
+    // Explicit firebase_uid only resolves Firebase UIDs. For user_id, try Firebase UID
+    // first and then treat an unknown value as a Sharegram account ID.
+    if (firebase_uid) {
+      const userByFirebase = await User.findOne({ where: { firebaseUid: firebase_uid }, attributes: ['id'] });
+      if (!userByFirebase) return res.json({ success: true, data: [] });
+      whereClause.userId = userByFirebase.id;
+    } else if (user_id) {
+      const userByFirebase = await User.findOne({ where: { firebaseUid: user_id }, attributes: ['id'] });
+      if (userByFirebase) whereClause.userId = userByFirebase.id;
+      else whereClause.sharegramUserId = user_id;
     }
 
     // 期限切れ間近の書類フィルタリング
@@ -284,7 +301,7 @@ router.get('/:id', auth, async (req, res) => {
     }
     
     // ユーザーロールの場合、自分が登録したデータのみアクセス可能
-    if (req.user && req.user.role === "user" && performer.userId !== req.user?.id) {
+    if (!canAccessPerformer(req, performer)) {
       return res.status(403).json({ 
         success: false,
         message: 'このデータへのアクセス権限がありません。' 
@@ -336,7 +353,7 @@ router.put('/:id', auth, uploadFields, async (req, res) => {
     }
 
     // ユーザーロールの場合、自分が登録したデータのみ更新可能
-    if (req.user && req.user.role === 'user' && performer.userId !== req.user?.id) {
+    if (!canAccessPerformer(req, performer)) {
       return res.status(403).json({
         success: false,
         message: 'このデータの更新権限がありません。'
@@ -470,15 +487,24 @@ router.post('/', auth, uploadFields, async (req, res) => {
       return res.status(400).json({ message: '必須ファイル（許諾書、身分証明書表面、本人写真）がアップロードされていません。すべての必須書類をアップロードしてください。' });
     }
     
+    // Ownership is mandatory for newly-created performers. Resolve the Sharegram id
+    // from the persisted owner when the SSO token did not carry it.
+    const owner = req.user?.id ? await User.findByPk(req.user.id) : null;
+    const ownerId = req.user?.id || null;
+    const sharegramOwnerId = req.user?.sharegramUserId || owner?.sharegramUserId;
+    if (!ownerId || !sharegramOwnerId) {
+      return res.status(409).json({ success: false, message: 'Unable to resolve performer owner; performer was not created.' });
+    }
+
     // 出演者データの作成
     const performer = await Performer.create({
-      userId: req.user?.id || null, // 作成者のユーザーID
+      userId: ownerId, // 作成者のユーザーID
       lastName,
       firstName,
       lastNameRoman,
       firstNameRoman,
       external_id: external_id,
-      sharegramUserId: req.user.sharegramUserId || null,
+      sharegramUserId: sharegramOwnerId,
       status: 'pending', // 初期ステータスは「保留中」
       documents: {
         agreementFile: req.files.agreementFile ? {
@@ -583,7 +609,7 @@ router.get('/:id/documents', auth, async (req, res) => {
     }
     
     // ユーザーロールの場合、自分が登録したデータのみアクセス可能
-    if (req.user && req.user.role === "user" && performer.userId !== req.user?.id) {
+    if (!canAccessPerformer(req, performer)) {
       return res.status(403).json({ 
         success: false,
         message: 'このデータへのアクセス権限がありません。' 
@@ -702,7 +728,7 @@ router.get('/:id/documents/metadata', auth, async (req, res) => {
     }
 
     // アクセス制御：本人または管理者のみ
-    if (req.user?.role !== 'admin' && performer.userId !== req.user?.id) {
+    if (!canAccessPerformer(req, performer)) {
       return res.status(403).json({ 
         success: false,
         error: {
@@ -808,7 +834,7 @@ router.get('/:id/documents/:type', auth, async (req, res) => {
     }
     
     // ユーザーロールの場合、自分が登録したデータのみアクセス可能
-    if (req.user && req.user.role === "user" && performer.userId !== req.user?.id) {
+    if (!canAccessPerformer(req, performer)) {
       return res.status(403).json({ 
         success: false,
         message: 'このデータへのアクセス権限がありません。' 
@@ -1331,7 +1357,7 @@ router.post('/registration-complete', auth, async (req, res) => {
     }
     
     // ユーザーロールの場合、自分が登録したデータのみアクセス可能
-    if (req.user && req.user.role === "user" && performer.userId !== req.user?.id) {
+    if (!canAccessPerformer(req, performer)) {
       return res.status(403).json({ message: 'このデータへのアクセス権限がありません' });
     }
     
@@ -1586,7 +1612,7 @@ router.delete('/:id', auth, async (req, res) => {
     }
     
     // ユーザーロールの場合、自分が登録したデータのみ削除可能
-    if (req.user && req.user.role === "user" && performer.userId !== req.user?.id) {
+    if (!canAccessPerformer(req, performer)) {
       return res.status(403).json({ message: 'このデータを削除する権限がありません。' });
     }
     

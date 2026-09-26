@@ -70,21 +70,20 @@ cd server && npm start   # API
 cd server && npm run db:setup  # migrate (schema from zero) + seed (accounts + demo data)
 ```
 
-### Local Firebase Emulator (optional)
+### Local Sharegram/KYC SSO with real Firebase (no emulator)
 
-```bash
-npm run emulator   # Auth 9099 / Firestore 8080 / RTDB 9000 / Storage 9199 / Hosting 5000 / UI 4000
-```
+Use one dedicated Firebase project for local Sharegram and KYC testing. Do not use the Firebase Emulator for this SSO flow.
 
-- Uses `firebase.emulator.json` and the deny-all rules in `emulator/`. `firebase.json` and the
-  root `*.rules` files are the deploy config and are not touched by the emulator.
-- Accounts persist in `.firebase-data/` (git-ignored). When moving to a new checkout, copy that
-  folder too: KYC users are linked by Firebase UID, and a re-created emulator account gets a new UID.
-- Enable it on the frontend with `REACT_APP_USE_FIREBASE_EMULATOR=true` and on the API with
-  `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` (project id `demo-kyc-local` on both).
+1. Create/register a Firebase project and Web App for testing. Enable the authentication provider(s) Sharegram uses.
+2. Copy that project's Web App values into the KYC frontend `.env.local` using `.env.development.template` as a guide. Set `REACT_APP_USE_FIREBASE_EMULATOR=false` and keep the API URL pointed at the local KYC API.
+3. Configure the KYC API's local `server/.env` with the same `FIREBASE_PROJECT_ID` and that project's service-account credentials. **Do not set** `FIREBASE_AUTH_EMULATOR_HOST` or `FIRESTORE_EMULATOR_HOST`.
+4. Configure Sharegram's Firebase Web App and backend service account to the exact same project. Start the Sharegram API before testing login; its custom-token sign-in must complete so the browser can send a real Firebase ID token to KYC.
+5. Restart both frontend dev servers after changing env files. Never commit `.env.local`, `server/.env`, or service-account keys.
+
+The KYC frontend refuses to silently initialize against a hard-coded Firebase project when required Web App settings are missing. Add the new test project's values before starting it. The older emulator config and export folders are not used by this workflow; old local data is not automatically deleted.
+
 - Sending performers to Sharegram: [`docs/SHAREGRAM_KYC_WEBHOOK.md`](docs/SHAREGRAM_KYC_WEBHOOK.md).
-- Receiving users from Sharegram (`/sso?token=...`): the URL the Sharegram side must build and
-  the checks when it does not work — [`docs/SHAREGRAM_SSO_HANDOFF.md`](docs/SHAREGRAM_SSO_HANDOFF.md).
+- Receiving users from Sharegram (`/sso?token=...`): [`docs/SHAREGRAM_SSO_HANDOFF.md`](docs/SHAREGRAM_SSO_HANDOFF.md).
 
 ### Read this first
 

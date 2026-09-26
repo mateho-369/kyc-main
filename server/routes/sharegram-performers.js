@@ -34,6 +34,11 @@ router.get('/', sharegramAuth, async (req, res) => {
     const limitNum = Math.min(100, Math.max(1, parseInt(limit))); // 最大100件
     const offset = (pageNum - 1) * limitNum;
     
+    // Fail closed: external_ids is a valid explicit scope for this endpoint.
+    if (!user_id && !(external_ids && external_ids.split(',').some(id => id.trim()))) {
+      return res.status(400).json({ error: 'owner scope required: user_id / external_ids' });
+    }
+
     // 検索条件の構築
     const whereClause = {};
     

@@ -148,3 +148,5 @@ firebase-adminsdk*.json
 # Firebase Emulator のローカルデータ（npm run emulator の --export-on-exit 先）。
 # Auth エミュレータのアカウント（メール・UID）が入るのでコミットしない。
 .firebase-data/
+!/docs/SHAREGRAM_SSO_HANDOFF.md
+!/docs/PROMPT-performer-ownership.md

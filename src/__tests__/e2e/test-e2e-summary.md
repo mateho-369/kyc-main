@@ -37,9 +37,9 @@
 - 自動サーバー起動設定
 
 ✅ **global-setup.js** - E2Eテスト前処理
-- Firebase Emulator起動確認
+- Shared real Firebase project environment validation (no emulator)
 - バックエンド・フロントエンドサーバー起動確認
-- テスト用ユーザーデータ自動作成
+- Firebase test users must be provisioned in the dedicated test project before running auth E2E cases
 - 環境変数検証
 
 ✅ **global-teardown.js** - E2Eテスト後処理
@@ -87,10 +87,9 @@ npm run test:all          # 全テスト実行（unit + integration + e2e）
 ## 🔧 実行方法と期待結果
 
 ### 実行前提条件
-```bash
-# Firebase Emulator起動
-firebase emulators:start --only auth,firestore
+Configure the dedicated test Firebase project in local environment files. Do not point E2E tests at production accounts.
 
+```bash
 # バックエンドサーバー起動（ポート3001）
 npm run start:server
 

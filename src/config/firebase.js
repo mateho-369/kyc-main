@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator, browserSessionPersistence, setPersistence } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getAuth, browserSessionPersistence, setPersistence } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 import { auth as fallbackAuth, db as fallbackDb } from './firebase-fallback';
 
 // セキュリティチェック関数
@@ -25,9 +25,8 @@ const validateEnvironment = () => {
   );
 
   if (missingVars.length > 0) {
-    console.warn('⚠️ Firebase環境変数が一部未設定:', missingVars);
-    console.log('✅ Firebase設定: ハードコードされた正しい設定値を使用');
-    // ハードコードされた正しい設定値があるので初期化を続行
+    console.error('Firebase configuration is incomplete; refusing to initialize against a fallback project:', missingVars);
+    return false;
   }
 
   // 本番環境でHTTPSチェック（一時的に警告のみ）
@@ -39,22 +38,24 @@ const validateEnvironment = () => {
   return true;
 };
 
-// Firebase設定オブジェクト（統一設定）
-// フォールバック値は Sharegram と共有する adroit-standard-496710-r5 を指す。
-// 旧プロジェクト singular-winter-370002 を残していると、環境変数の設定漏れ時に
-// 黙って別プロジェクトで認証してしまうため、必ずこの値と揃えること。
+// Use only the explicitly configured shared Firebase project. Never silently fall
+// back to a hard-coded project, which can authenticate against the wrong account set.
 const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyC9pSqeZeOjvndPX_dPEsaIU22CUWVYB_0',
-  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || 'adroit-standard-496710-r5.firebaseapp.com',
-  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'adroit-standard-496710-r5',
-  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || 'adroit-standard-496710-r5.firebasestorage.app',
-  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || '716516303448',
-  appId: process.env.REACT_APP_FIREBASE_APP_ID || '1:716516303448:web:e7ab0a08b087ffd60f602d',
-  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID || 'G-MQYZWN6H34'
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID,
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID || process.env.FIREBASE_MEASUREMENT_ID
 };
 
 // Firebase初期化前の検証
-const shouldInitialize = validateEnvironment();
+const emulatorRequested = process.env.REACT_APP_USE_FIREBASE_EMULATOR === 'true';
+if (emulatorRequested) {
+  console.error('This KYC SSO configuration uses real Firebase only; remove REACT_APP_USE_FIREBASE_EMULATOR from the frontend env.');
+}
+const shouldInitialize = !emulatorRequested && validateEnvironment();
 
 let app = null;
 let auth = null;
@@ -81,23 +82,6 @@ if (shouldInitialize) {
 }
 
 export { auth, db, isMock };
-
-// 開発環境でのエミュレータ設定
-if (shouldInitialize && process.env.REACT_APP_USE_FIREBASE_EMULATOR === 'true') {
-  console.log('🔧 Firebase Emulatorモードで起動');
-  
-  // 認証エミュレータ
-  const authEmulatorUrl = process.env.REACT_APP_FIREBASE_AUTH_EMULATOR_URL || 'http://127.0.0.1:9099';
-  const firestoreEmulatorUrl = process.env.REACT_APP_FIREBASE_FIRESTORE_EMULATOR_URL || 'http://127.0.0.1:8080';
-  const firestoreUrl = new URL(firestoreEmulatorUrl);
-
-  connectAuthEmulator(auth, authEmulatorUrl, {
-    disableWarnings: true
-  });
-
-  // Firestore emulator
-  connectFirestoreEmulator(db, firestoreUrl.hostname, Number(firestoreUrl.port || 8080));
-}
 
 // セキュリティ設定
 if (auth && typeof setPersistence === 'function' && auth.useDeviceLanguage) {

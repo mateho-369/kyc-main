@@ -39,6 +39,12 @@ let firestore = null;
 // Firebase Admin SDK初期化関数
 const initializeFirebaseAdmin = () => {
   try {
+    // The Sharegram/KYC SSO setup uses real Firebase only. The Admin SDK trusts
+    // emulator-issued tokens when this is set, so reject it in every environment.
+    if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+      throw new Error('FIREBASE_AUTH_EMULATOR_HOST is disabled for this KYC SSO setup');
+    }
+
     // Firebase無効化フラグのチェック
     if (process.env.DISABLE_FIREBASE === 'true') {
       logger.info('Firebase Admin SDK disabled by DISABLE_FIREBASE flag');

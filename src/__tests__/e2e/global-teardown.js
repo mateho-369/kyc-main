@@ -15,28 +15,6 @@ async function cleanupTestData() {
   console.log('🗑️ テストデータのクリーンアップを開始...');
 
   try {
-    // Firebase Emulator のデータクリア
-    const clearAuthResponse = await fetch('http://localhost:9099/emulator/v1/projects/demo-project/accounts', {
-      method: 'DELETE'
-    });
-
-    if (clearAuthResponse.ok) {
-      console.log('✅ Firebase Auth Emulator のデータがクリアされました');
-    } else {
-      console.log('⚠️ Firebase Auth Emulator のデータクリアに失敗しました');
-    }
-
-    // Firestore Emulator のデータクリア
-    const clearFirestoreResponse = await fetch('http://localhost:8080/emulator/v1/projects/demo-project/databases/(default)/documents', {
-      method: 'DELETE'
-    });
-
-    if (clearFirestoreResponse.ok) {
-      console.log('✅ Firestore Emulator のデータがクリアされました');
-    } else {
-      console.log('⚠️ Firestore Emulator のデータクリアに失敗しました');
-    }
-
     // バックエンドのテストデータクリア
     try {
       const response = await fetch('http://localhost:3001/api/test/cleanup', {

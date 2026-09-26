@@ -83,6 +83,13 @@ describe('extractSsoToken', () => {
     expect(result.reason).toBe('malformed');
   });
 
+  it('rejects unsigned emulator JWTs because SSO requires a real Firebase ID token', () => {
+    const unsignedToken = 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJhdWQiOiJkZW1vLWt5Yy1sb2NhbCJ9.';
+    const result = extractSsoToken({ search: `?token=${unsignedToken}` });
+    expect(result.token).toBeNull();
+    expect(result.reason).toBe('malformed');
+  });
+
   it('does not blow up on an empty location', () => {
     expect(extractSsoToken({ search: '', hash: '' }).token).toBeNull();
     expect(extractSsoToken({}).token).toBeNull();

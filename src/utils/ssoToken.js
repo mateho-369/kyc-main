@@ -40,6 +40,8 @@ export function looksLikeJwt(value) {
   const trimmed = value.trim();
   if (trimmed.length < 20) return false;
   if (REJECTED_LITERALS.includes(trimmed.toLowerCase())) return false;
+  // This integration uses real Firebase only: require the three non-empty JWT
+  // segments produced by Firebase Auth; emulator/alg:none tokens are rejected.
   return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(trimmed);
 }
 
