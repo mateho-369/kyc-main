@@ -83,7 +83,7 @@ if (shouldInitialize) {
 export { auth, db, isMock };
 
 // 開発環境でのエミュレータ設定
-if (shouldInitialize && process.env.REACT_APP_USE_FIREBASE_EMULATOR === 'true') {
+if (shouldInitialize && process.env.REACT_APP_USE_FIREBASE_EMULATOR === 'true' && process.env.NODE_ENV !== 'production') {
   console.log('🔧 Firebase Emulatorモードで起動');
   
   // 認証エミュレータ

@@ -91,6 +91,10 @@ describe('extractSsoToken', () => {
     vi.stubEnv('REACT_APP_USE_FIREBASE_EMULATOR', 'true');
     expect(extractSsoToken({ search: `?token=${emulatorToken}` }).token).toBe(emulatorToken);
     vi.stubEnv('REACT_APP_USE_FIREBASE_EMULATOR', 'false');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubGlobal('window', { location: { hostname: 'app.example.com' } });
+    expect(extractSsoToken({ search: `?token=${emulatorToken}` }).reason).toBe('malformed');
+    vi.stubEnv('NODE_ENV', 'test');
     vi.stubGlobal('window', { location: { hostname: 'localhost' } });
     expect(extractSsoToken({ search: `?token=${emulatorToken}` }).token).toBe(emulatorToken);
     vi.unstubAllEnvs();

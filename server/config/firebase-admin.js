@@ -39,6 +39,12 @@ let firestore = null;
 // Firebase Admin SDK初期化関数
 const initializeFirebaseAdmin = () => {
   try {
+    // Admin SDK trusts emulator-issued unsigned tokens when this is set; production
+    // must never silently use the Auth Emulator.
+    if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+      throw new Error('FIREBASE_AUTH_EMULATOR_HOST is forbidden in production');
+    }
+
     // Firebase無効化フラグのチェック
     if (process.env.DISABLE_FIREBASE === 'true') {
       logger.info('Firebase Admin SDK disabled by DISABLE_FIREBASE flag');

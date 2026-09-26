@@ -19,6 +19,12 @@ const { validateToken } = require('../utils/tokenValidator');
  * @returns {boolean} 初期化できたか
  */
 const initializeFirebaseAdmin = () => {
+  // Firebase Admin SDK trusts unsigned emulator tokens when this variable is set.
+  // Never initialize/verify via the emulator in production, even if an app exists.
+  if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    console.error('Firebase Auth Emulator is forbidden in production; refusing Firebase authentication.');
+    return false;
+  }
   if (admin.apps.length) return true;
 
   if (process.env.DISABLE_FIREBASE === 'true') {
@@ -237,6 +243,14 @@ const extractFirebaseIdTokenCandidates = (req) => {
  */
 const authenticateFirebase = (options = { required: true }) => {
   return async (req, res, next) => {
+    if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+      return res.status(503).json({
+        success: false,
+        error: 'Firebase Auth Emulator is forbidden in production',
+        code: 'FIREBASE_EMULATOR_FORBIDDEN'
+      });
+    }
+
     // Firebaseが未設定のままリクエストを通すと、誰でも test@example.com
     // （Test User）としてログインできてしまう。開発環境であっても
     // 「認証済みのふり」をさせるのは危険なので、未設定は明示的に拒否する。

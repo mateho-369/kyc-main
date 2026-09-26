@@ -15,6 +15,10 @@ const asyncHandler = require('../utils/asyncHandler');
 // Firebase Admin SDK初期化（エラーハンドリング強化）
 const initializeFirebase = () => {
   try {
+    if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+      console.error('Firebase Auth Emulator is forbidden in production.');
+      return false;
+    }
     if (!admin.apps.length) {
       // 環境変数の存在確認
       if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_PRIVATE_KEY || !process.env.FIREBASE_CLIENT_EMAIL) {
@@ -50,6 +54,11 @@ router.post('/firebase-verify', sanitizeFirebaseRequest, validateFirebaseVerify,
     // Firebase ID Tokenを検証（エラーハンドリング付き）
     let decodedToken;
     try {
+      if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+        const configError = new Error('Firebase Auth Emulator is forbidden in production');
+        configError.code = 'FIREBASE_EMULATOR_FORBIDDEN';
+        throw configError;
+      }
       if (!admin.apps.length) {
         // Firebase未初期化のときにモックユーザーを返すと、誰でも
         // mock@example.com としてログインできてしまう。ここでは失敗させる。
@@ -62,13 +71,13 @@ router.post('/firebase-verify', sanitizeFirebaseRequest, validateFirebaseVerify,
 
       decodedToken = await admin.auth().verifyIdToken(id_token);
     } catch (error) {
-      if (error.code === 'FIREBASE_NOT_CONFIGURED') {
-        console.error('Firebase未設定のため検証を拒否しました:', error.message);
+      if (error.code === 'FIREBASE_NOT_CONFIGURED' || error.code === 'FIREBASE_EMULATOR_FORBIDDEN') {
+        console.error('Firebase設定により検証を拒否しました:', error.message);
         return res.status(503).json({
           success: false,
           error: {
-            code: 'FIREBASE_NOT_CONFIGURED',
-            message: 'サーバーのFirebase設定が不完全なため、ID Tokenを検証できません'
+            code: error.code,
+            message: error.message
           }
         });
       }
@@ -215,6 +224,9 @@ router.get('/firebase-sso', sanitizeFirebaseRequest, validateFirebaseSSOQuery, a
     const { id_token, redirect_url } = req.validatedQuery;
 
     // ID Tokenを検証 (checkRevoked=true で失効チェック)
+    if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+      return res.status(503).json({ success: false, error: 'Firebase Auth Emulator is forbidden in production', code: 'FIREBASE_EMULATOR_FORBIDDEN' });
+    }
     let decodedToken;
     try {
       decodedToken = await admin.auth().verifyIdToken(id_token, true);
