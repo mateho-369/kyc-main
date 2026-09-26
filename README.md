@@ -100,15 +100,14 @@ with a different database. A dev build prints a console warning when this is uns
 
 ### Seeding
 
-After `npm run migrate` the database has the right *shape* but **zero users**. Three
-seeders exist; all are idempotent, and `npm run seed` runs them in order
+After `npm run migrate` the database has the right *shape* but **zero users**. Two
+seeders exist; both are idempotent, and `npm run seed` runs them in order
 (or `npm run db:setup`, which is `migrate && seed`):
 
 | seeder | what it does | needs env? |
 | --- | --- | --- |
 | `0001-seed-accounts` | creates a **normal user** and an **admin** you can log in with | no (defaults below) |
 | `0002-promote-sso-admin` | promotes *your real Sharegram account* to `admin` | `SEED_ADMIN_EMAIL` |
-| `0003-seed-demo-performers` | adds a few **performers** (and matching audit rows) to those accounts so the lists are not empty | no — skip with `SEED_DEMO_DATA=false` |
 
 ```bash
 cd server
@@ -117,7 +116,7 @@ npm run seed:status                 # what has been applied
 npm run seed:undo                   # down() both seeders
 ```
 
-The dev accounts (only ever created outside production):
+Only the two development account records below are seeded; no performer or demo input rows are seeded. These accounts are created only outside production:
 
 ```
 user@example.com   /  user123    role=user
