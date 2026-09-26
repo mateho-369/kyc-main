@@ -40,7 +40,15 @@ export function looksLikeJwt(value) {
   const trimmed = value.trim();
   if (trimmed.length < 20) return false;
   if (REJECTED_LITERALS.includes(trimmed.toLowerCase())) return false;
-  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(trimmed);
+  const signedJwt = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(trimmed);
+  if (signedJwt) return true;
+
+  // The Firebase Auth Emulator can issue unsigned ID-token-shaped JWTs (alg:none,
+  // empty signature). Permit that shape only in explicit local emulator mode; the
+  // backend emulator verifier remains responsible for validating the token.
+  const emulatorMode = typeof process !== 'undefined'
+    && process.env.REACT_APP_USE_FIREBASE_EMULATOR === 'true';
+  return emulatorMode && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.$/.test(trimmed);
 }
 
 const safeDecode = (value) => {

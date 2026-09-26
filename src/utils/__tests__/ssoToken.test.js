@@ -6,7 +6,7 @@
  * 出していた。どの形なら拾えるのか／拾えないときに何と言うのかを固定する。
  * 実行: npx vitest run src/utils
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { extractSsoToken, looksLikeJwt, TOKEN_PARAM_NAMES } from '../ssoToken';
 
 // JWT の形をしたダミー（3 要素・十分な長さ）
@@ -81,6 +81,15 @@ describe('extractSsoToken', () => {
     const result = extractSsoToken({ search: '?token=undefined&action=create' });
     expect(result.token).toBeNull();
     expect(result.reason).toBe('malformed');
+  });
+
+  it('accepts an unsigned Firebase Auth Emulator token only when emulator mode is enabled', () => {
+    const emulatorToken = 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJhdWQiOiJkZW1vLWt5Yy1sb2NhbCJ9.';
+    vi.stubEnv('REACT_APP_USE_FIREBASE_EMULATOR', 'false');
+    expect(extractSsoToken({ search: `?token=${emulatorToken}` }).reason).toBe('malformed');
+    vi.stubEnv('REACT_APP_USE_FIREBASE_EMULATOR', 'true');
+    expect(extractSsoToken({ search: `?token=${emulatorToken}` }).token).toBe(emulatorToken);
+    vi.unstubAllEnvs();
   });
 
   it('does not blow up on an empty location', () => {
