@@ -140,10 +140,21 @@ https://stg.id-manager.com/sso?token={Firebase_ID_Token}&action=create&performer
 
 | パラメータ | 型 | 必須 | 説明 |
 |-----------|------|------|------|
-| token | string | Yes | Firebase ID Token |
+| token | string | Yes | Firebase ID Token（`getIdToken()` の戻り値。**未サインインのまま遷移させない**） |
 | action | string | Yes | 操作種別: `create`（新規作成）または `edit`（編集） |
 | performer_id | string | No | KYCの出演者ID（action=editの場合は必須） |
 | come_back_url | string | No | 認証・操作完了後のSharegramへの戻り先URL（URLエンコード必須） |
+
+> **重要（token は必須）**
+> `token` が付いていない遷移は KYC 側でログインを成立させられません。
+> 未サインインのユーザーや `getIdToken()` を `await` していない値（`[object Promise]`）を
+> そのまま渡すと、KYC は「Firebase ID Tokenが指定されていません」画面を表示します。
+> 送信前に「トークンが取得できたか」を必ず確認してください（詳細と実装例:
+> [`docs/SHAREGRAM_SSO_HANDOFF.md`](docs/SHAREGRAM_SSO_HANDOFF.md)）。
+>
+> 受け付ける揺れ（送信側は `token` の 1 通りでよい）:
+> `id_token` / `idToken` / `firebase_token` などの別名、URLハッシュ（`#token=...`）、
+> `come_back` と `come_back_url` の両方、二重エンコードされた `come_back`。 
 
 #### リクエスト例
 

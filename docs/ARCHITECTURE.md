@@ -33,7 +33,9 @@ src/
 │   ├── Header.jsx       # ロゴ／メニューボタン（狭い画面）／ユーザー／ログアウト
 │   └── Navigation.jsx   # サイドバー（lg以上は常時、未満はドロワー）
 └── utils/               # 画面に依存しない純関数（テストしやすくする場所）
-    └── sharegramReturn.js  # Sharegram への戻り先URL検証（SSOPage と登録画面が共有）
+    ├── sharegramReturn.js  # Sharegram への戻り先URL検証（SSOPage と登録画面が共有）
+    ├── ssoToken.js         # /sso に届く token の取り出し（クエリ/ハッシュ/別名）
+    └── authToken.js        # ★ access token の保存キーはここだけ（'accessToken' に統一）
 ```
 
 **追加時の規則**
@@ -60,6 +62,9 @@ server/
 │   └── performers.js              # 出演者 CRUD・書類・approve（:1213）
 ├── services/
 │   └── sharegram/sharegramAccountService.js  # API照会＋JWT claimsから表示情報を正規化
+├── utils/
+│   ├── requestToken.js  # ★ 保護APIのトークン解決（Authorization → Cookie → refresh）
+│   └── auth.js          # setAuthCookies / clearAuthCookies（Cookie の唯一の定義）
 ├── migrations/ + utils/migrationGuard.js     # 冪等マイグレーション（1050/1051/1060/1061/1091のみ無視）
 ├── seeders/             # SEED_ADMIN_EMAIL で admin を昇格（未設定なら no-op）
 ├── scripts/             # diagnose-sso-token.js / check-user-schema.js / healthcheck.js
@@ -84,15 +89,26 @@ server/
 Sharegram FE (:3000)
   └─ /sso?token=<Firebase ID token>&come_back=...&action=create
       └─ KYC FE (:3300) SSOPage
+           ├─ token を解決: クエリ → ハッシュ → （同じブラウザの Firebase サインイン）
+           │    └─ 見つからなければ「tokenパラメータが送られていません」と明示して停止
            ├─ POST /api/auth/firebase-session  { idToken }      ← 3つのヘッダーにも同値を載せる
            │    └─ middleware/firebaseAuth: verifyIdToken(project adroit-standard-496710-r5)
            │         ├─ Sharegram 口座APIで名前・avatar を補完（失敗しても継続）
            │         ├─ getOrCreateUserFromFirebase: email → users 行を作る/再利用
            │         │    └─ profilePicture は URL でない・512字超なら NULL（Users は varchar(512)）
            │         └─ FirebaseUsers に uid マッピング（1行のみ）
+           ├─ setAuthCookies（httpOnly access/refresh）＋ 応答の token を localStorage へ
+           │    └─ 保存キーは utils/authToken.js の 'accessToken' のみ
            ├─ AuthContext.setUser（表示名は claims か Sharegram API、Test User には絶対フォールバックしない）
            └─ come_back が安全（http/https・512字以内）なら navigate、無ければ /performers/add
 ```
+
+保護API（`/api/performers`, `/api/dashboard/stats`, `/api/admin/users` …）は
+`utils/requestToken.js` 経由で **Authorization → Cookie → refresh Cookie** の順に
+トークンを解決する。以前は `/api/auth/me` だけが Cookie を見ていたため、
+Cookie セッションなのに「me は 200、保護APIは 401」という食い違いが起きていた。
+
+送信側（Sharegram）が守る URL 仕様と実装例: [`SHAREGRAM_SSO_HANDOFF.md`](SHAREGRAM_SSO_HANDOFF.md)
 
 ## 4. いま「配線されていない」もの（見つけたら壊れていて当然の箇所）
 

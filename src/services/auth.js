@@ -1,5 +1,6 @@
 import secureApiClient from './SecureApiClient';
 import { auth } from '../config/firebase';
+import { setAccessToken, clearAccessToken } from '../utils/authToken';
 
 export const login = async (email, password) => {
   try {
@@ -9,7 +10,7 @@ export const login = async (email, password) => {
 
     // accessTokenをlocalStorageに保存（Cookie送信問題の回避策）
     if (accessToken) {
-      localStorage.setItem('accessToken', accessToken);
+      setAccessToken(accessToken);
       console.log('✅ アクセストークンをlocalStorageに保存');
     }
 
@@ -27,7 +28,7 @@ export const logout = async () => {
     await secureApiClient.logout();
 
     // localStorageのトークンをクリア
-    localStorage.removeItem('accessToken');
+    clearAccessToken();
 
     // Firebaseログアウトも実行
     if (auth.currentUser) {
@@ -39,7 +40,7 @@ export const logout = async () => {
   } catch (error) {
     console.error('ログアウトエラー:', error);
     // エラーがあってもクリーンアップを実行
-    localStorage.removeItem('accessToken');
+    clearAccessToken();
     return true;
   }
 };

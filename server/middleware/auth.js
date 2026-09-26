@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { User } = require('../models');
 const tokenService = require('../services/tokenService');
+const { resolveRequestToken } = require('../utils/requestToken');
 const { logger } = require('../utils/logger/logger');
 const { auditLogger } = require('../utils/logger/auditLogger');
 // AppError エラーハンドリング修正
@@ -23,8 +24,11 @@ const authenticateToken = async function(req, res, next) {
   const startTime = Date.now();
   
   try {
-    // トークンの取得
-    const token = req.header('Authorization')?.replace('Bearer ', '');
+    // トークンの取得（Authorization → Cookie → リフレッシュ Cookie）
+    // 以前は Authorization ヘッダーしか見ておらず、httpOnly Cookie だけで
+    // ログインしているセッション（/auth/firebase-session・/auth/login 直後）が
+    // /api/auth/me では 200、保護 API では 401 になっていた。
+    const { token, source } = await resolveRequestToken(req, res);
 
     if (!token) {
       return res.status(401).json({ 
@@ -82,6 +86,7 @@ const authenticateToken = async function(req, res, next) {
     // リクエストにユーザー情報とトークン情報を追加
     req.user = user;
     req.token = decoded;
+    req.authSource = source; // header | cookie | refreshed（調査用）
     req.requestId = requestId;
 
     // 成功ログ（デバッグレベル）
