@@ -29,6 +29,23 @@ export const TOKEN_PARAM_NAMES = [
 ];
 
 const REJECTED_LITERALS = ['undefined', 'null', 'none', 'false', 'true'];
+const decodeJwtJsonSegment = (segment) => {
+  try {
+    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = typeof atob === 'function'
+      ? atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='))
+      : Buffer.from(base64, 'base64').toString('utf8');
+    return JSON.parse(decoded);
+  } catch (error) {
+    return null;
+  }
+};
+
+const isLocalFirebaseEmulator = (header, payload) => {
+  const localHost = typeof window !== 'undefined'
+    && ['localhost', '127.0.0.1', '::1'].includes(window.location?.hostname);
+  return localHost && header?.alg === 'none' && payload?.aud === 'demo-kyc-local';
+};
 
 /**
  * Firebase ID Token（＝JWT）らしい形か。
@@ -48,7 +65,13 @@ export function looksLikeJwt(value) {
   // backend emulator verifier remains responsible for validating the token.
   const emulatorMode = typeof process !== 'undefined'
     && process.env.REACT_APP_USE_FIREBASE_EMULATOR === 'true';
-  return emulatorMode && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.$/.test(trimmed);
+  const unsignedMatch = trimmed.match(/^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.$/);
+  if (!unsignedMatch) return false;
+  if (emulatorMode) return true;
+  return isLocalFirebaseEmulator(
+    decodeJwtJsonSegment(unsignedMatch[1]),
+    decodeJwtJsonSegment(unsignedMatch[2])
+  );
 }
 
 const safeDecode = (value) => {

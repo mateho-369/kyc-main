@@ -83,13 +83,18 @@ describe('extractSsoToken', () => {
     expect(result.reason).toBe('malformed');
   });
 
-  it('accepts an unsigned Firebase Auth Emulator token only when emulator mode is enabled', () => {
+  it('accepts unsigned emulator tokens only in emulator mode or on the localhost emulator project', () => {
     const emulatorToken = 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJhdWQiOiJkZW1vLWt5Yy1sb2NhbCJ9.';
     vi.stubEnv('REACT_APP_USE_FIREBASE_EMULATOR', 'false');
+    vi.stubGlobal('window', { location: { hostname: 'app.example.com' } });
     expect(extractSsoToken({ search: `?token=${emulatorToken}` }).reason).toBe('malformed');
     vi.stubEnv('REACT_APP_USE_FIREBASE_EMULATOR', 'true');
     expect(extractSsoToken({ search: `?token=${emulatorToken}` }).token).toBe(emulatorToken);
+    vi.stubEnv('REACT_APP_USE_FIREBASE_EMULATOR', 'false');
+    vi.stubGlobal('window', { location: { hostname: 'localhost' } });
+    expect(extractSsoToken({ search: `?token=${emulatorToken}` }).token).toBe(emulatorToken);
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it('does not blow up on an empty location', () => {
