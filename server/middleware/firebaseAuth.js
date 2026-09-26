@@ -117,10 +117,26 @@ const upsertFirebaseUserMapping = async ({ uid, userId, email, name, picture, em
  * @returns {Object} ユーザー情報
  */
 const getOrCreateUserFromFirebase = async (decodedToken) => {
-  const { uid, email, email_verified } = decodedToken;
-  const name = decodedToken.name || decodedToken.displayName || null;
-  const picture = decodedToken.picture || decodedToken.photoURL || null;
+  const { uid } = decodedToken;
+  let email = decodedToken.email || null;
+  let emailVerified = !!decodedToken.email_verified;
+  let name = decodedToken.name || decodedToken.displayName || null;
+  let picture = decodedToken.picture || decodedToken.photoURL || null;
   const providerId = decodedToken.firebase?.sign_in_provider || 'custom';
+
+  // Custom-auth ID tokens do not necessarily include profile claims. Resolve them
+  // from the Firebase account record when possible; never invent an email address.
+  if ((!email || !name || !picture) && uid && admin.apps.length) {
+    try {
+      const firebaseUser = await admin.auth().getUser(uid);
+      email = email || firebaseUser.email || null;
+      emailVerified = emailVerified || !!firebaseUser.emailVerified;
+      name = name || firebaseUser.displayName || null;
+      picture = picture || firebaseUser.photoURL || null;
+    } catch (error) {
+      console.warn('Firebase profile lookup failed:', error.message);
+    }
+  }
 
   let user = await User.findOne({ where: { firebaseUid: uid } });
   if (!user && email) {
@@ -131,16 +147,21 @@ const getOrCreateUserFromFirebase = async (decodedToken) => {
     await user.update({
       firebaseUid: uid,
       lastLoginAt: new Date(),
-      emailVerified: user.emailVerified || !!email_verified
+      emailVerified: user.emailVerified || emailVerified
     });
     console.log('✅ Firebaseユーザーを既存アカウントに紐付け:', user.id, user.email);
   } else {
+    if (!email) {
+      const error = new Error('Firebase account has no email claim or registered email; Sharegram must provide a Firebase account with an email address.');
+      error.code = 'FIREBASE_EMAIL_REQUIRED';
+      throw error;
+    }
     user = await User.create({
       email,
       name: name || email.split('@')[0],
       role: 'user',
       isActive: true,
-      emailVerified: !!email_verified,
+      emailVerified,
       authProvider: 'firebase',
       // 次回のSSOで UID から直接引けるようにする（重複アカウント防止）
       firebaseUid: uid,
@@ -158,7 +179,7 @@ const getOrCreateUserFromFirebase = async (decodedToken) => {
     email: user.email,
     name: user.name,
     picture,
-    emailVerified: email_verified,
+    emailVerified,
     providerId
   });
 
@@ -325,6 +346,13 @@ const authenticateFirebase = (options = { required: true }) => {
       next();
     } catch (error) {
       console.error('Firebase user provisioning error:', error);
+      if (error.code === 'FIREBASE_EMAIL_REQUIRED') {
+        return res.status(422).json({
+          success: false,
+          error: error.message,
+          code: 'FIREBASE_EMAIL_REQUIRED'
+        });
+      }
       return res.status(500).json({
         success: false,
         error: 'Failed to provision the authenticated user',
