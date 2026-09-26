@@ -78,7 +78,7 @@ npm run emulator   # Auth 9099 / Firestore 8080 / RTDB 9000 / Storage 9199 / Hos
 
 - Uses `firebase.emulator.json` and the deny-all rules in `emulator/`. `firebase.json` and the
   root `*.rules` files are the deploy config and are not touched by the emulator.
-- Accounts persist in `../firebase-data/` beside the KYC checkout (for example, `shargram-kyc/firebase-data/`). `npm run emulator` creates this folder only if it does not exist, imports its saved data, and exports updates there when the emulator exits. Existing data is preserved; do not delete it if you need the emulator accounts/UIDs.
+- Accounts persist in `../firebase-data/` beside the KYC checkout (for example, `shargram-kyc/firebase-data/`). `npm run emulator` creates this folder only if it does not exist, imports its saved data, and exports updates there when the emulator exits. Existing root-level `.firebase-data/` and `firebase-export-*` folders from older runs/manual exports are moved (not deleted) into `../firebase-data/legacy-project-exports/` after the emulator exits, if no other emulator suite is still running.
 - Frontend emulator settings are in `.env.development.template` (copy to the frontend's `.env.local`): `REACT_APP_USE_FIREBASE_EMULATOR=true`, project ID `demo-kyc-local`, Auth `127.0.0.1:9099`, and Firestore `127.0.0.1:8080`. This project ID must match Sharegram's emulator project. Restart the frontend after changing env values.
 - For local API token verification, set `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` and `FIREBASE_PROJECT_ID=demo-kyc-local` in the API server environment. Production environments must not enable emulator mode.
 - Sending performers to Sharegram: [`docs/SHAREGRAM_KYC_WEBHOOK.md`](docs/SHAREGRAM_KYC_WEBHOOK.md).
