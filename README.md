@@ -73,7 +73,7 @@ cd server && npm run db:setup  # migrate (schema from zero) + seed (accounts + d
 ### Local Firebase Emulator (optional)
 
 ```bash
-npm run emulator   # Auth 9099 / Firestore 8080 / RTDB 9000 / Storage 9199 / Hosting 5001 / UI 4000
+npm run emulator   # Auth 9099 / Firestore 8080 / RTDB 9000 / Storage 9199 / Hosting 6000 / UI 4000
 ```
 
 - Uses `firebase.emulator.json` and the deny-all rules in `emulator/`. `firebase.json` and the
