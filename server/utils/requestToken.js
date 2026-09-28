@@ -34,6 +34,8 @@ async function resolveRequestToken(req, res) {
     if (headerToken) return { token: headerToken, source: 'header' };
   }
 
+  if (req.cookies?.accessToken || req.cookies?.refreshToken) require('../middleware/cookieMutationGuard')(req);
+
   if (req.cookies && req.cookies.accessToken) {
     return { token: req.cookies.accessToken, source: 'cookie' };
   }
@@ -46,13 +48,13 @@ async function resolveRequestToken(req, res) {
       });
 
       // 交換に成功したら Cookie を更新する（次回以降のリクエストで使う）
-      if (res) setAuthCookies(res, tokens);
+      if (res) setAuthCookies(res, tokens, { sameSite: 'strict' });
 
       return { token: tokens.accessToken, source: 'refreshed' };
     } catch (error) {
       logger.warn('requestToken: refresh cookie からのトークン更新に失敗', {
         error: error.message,
-        path: req.originalUrl
+        path: req.path
       });
     }
   }

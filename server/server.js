@@ -158,6 +158,8 @@ const auth = require('./middleware/auth');
 const checkRole = require('./middleware/checkRole');
 app.use('/api/audit-logs', auth, checkRole(['admin']), require('./routes/auditLogs'));
 app.use('/api/admin/users', require('./routes/admin-users'));
+app.use('/api/admin/decision-outbox', require('./routes/decision-outbox'));
+app.use('/api/admin/invitations', require('./routes/admin-invitations'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/documents', require('./routes/api/documents'));
 app.use('/api/sharegram', require('./routes/sharegram'));

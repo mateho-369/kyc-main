@@ -12,7 +12,7 @@ process.on('SIGINT', () => { stopped = true; });
   delivery.config(); // Fail startup without consuming attempts if not configured.
   await sequelize.authenticate(); // Never sync/alter schema from a worker.
   while (!stopped) {
-    try { await runOnce({ models, send: payload => delivery.send(payload) }); }
+    try { await runOnce({ models, send: payload => delivery.send(payload), onResult: result => console.info(JSON.stringify(result)) }); }
     catch (_) { console.error('Decision outbox cycle failed; lease will recover'); }
     if (!stopped) await new Promise(resolve => setTimeout(resolve, 1000));
   }

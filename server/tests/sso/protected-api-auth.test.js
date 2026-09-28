@@ -194,3 +194,34 @@ test('stored DB role, not the JWT role field, controls reviewer authorization',a
   const app=express();app.get('/review',authRequired,require('../../middleware/requireReviewer'),(req,res)=>res.sendStatus(200));
   expect((await request(app).get('/review').set('Authorization',`Bearer ${token}`)).status).toBe(403);
 });
+
+describe('restored cookie protection vs original upload',()=>{
+ test('automatic refresh restores Strict cookies from original auth-enhanced',async()=>{
+  const r=await request(buildApp()).get('/api/auth/me').set('Cookie',`refreshToken=${refreshToken}`);
+  expect(r.status).toBe(200);expect(r.headers['set-cookie'].filter(c=>/^(accessToken|refreshToken)=/.test(c)).every(c=>c.includes('SameSite=Strict'))).toBe(true);
+ });
+ test('new cookie-auth writes reject ambient cross-origin credentials; explicit bearer still works',async()=>{
+  const app=express();app.use(cookieParser());app.post('/write',authRequired,(req,res)=>res.sendStatus(200));
+  for(const origin of [undefined,'null','https://attacker.invalid','https://sub.kyc.example']){
+   let r=request(app).post('/write').set('Host','kyc.example').set('Cookie',`accessToken=${accessToken}`);if(origin)r=r.set('Origin',origin);expect((await r).status).toBe(403);
+  }
+  expect((await request(app).post('/write').set('Host','kyc.example').set('Origin','https://kyc.example').set('Cookie',`accessToken=${accessToken}`)).status).toBe(200);
+  expect((await request(app).post('/write').set('Authorization',`Bearer ${accessToken}`)).status).toBe(200);
+ });
+});
+
+test.each([[{isActive:false},403],[{isLocked:true},423],[null,401]])('current database principal state gates authentication: %j',async(change,status)=>{
+ require('../../models').User.findByPk.mockResolvedValueOnce(change ? {...mockUserRow,...change} : null);
+ expect((await request(buildApp()).get('/api/dashboard/stats').set('Authorization',`Bearer ${accessToken}`)).status).toBe(status);
+});
+
+test('cookie mutation guard enforces production HTTPS and rejects cross-site browser signals',()=>{
+ const guard=require('../../middleware/cookieMutationGuard');const previous=process.env.NODE_ENV;
+ const req=(origin,site)=>({method:'POST',get:name=>({'origin':origin,'host':'kyc.example','sec-fetch-site':site})[name]});
+ try {
+  process.env.NODE_ENV='production';
+  expect(()=>guard(req('http://kyc.example'))).toThrow();
+  expect(()=>guard(req('https://kyc.example','cross-site'))).toThrow();
+  expect(()=>guard(req('https://kyc.example','same-origin'))).not.toThrow();
+ } finally {if(previous===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=previous;}
+});

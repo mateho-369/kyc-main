@@ -27,14 +27,14 @@ const generateTokens = (payload) => {
 /**
  * HTTPOnlyクッキーを設定
  */
-const setAuthCookies = (res, { accessToken, refreshToken }) => {
+const setAuthCookies = (res, { accessToken, refreshToken }, { sameSite = 'lax' } = {}) => {
   const isProduction = process.env.NODE_ENV === 'production';
   
   // アクセストークン用クッキー
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'lax',
+    sameSite,
     maxAge: 60 * 60 * 1000, // 1時間
     path: '/'
   });
@@ -43,7 +43,7 @@ const setAuthCookies = (res, { accessToken, refreshToken }) => {
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'lax',
+    sameSite,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7日間
     path: '/'
   });

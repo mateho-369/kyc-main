@@ -86,8 +86,8 @@ const secureCORS = () => {
   return cors({
     origin: (origin, callback) => {
       const allowedOrigins = getAllowedOrigins();
-      if (origin === 'null') return callback(new Error('Origin not allowed'));
-      if (process.env.NODE_ENV === 'production' && origin && !origin.startsWith('https://')) return callback(new Error('Origin not allowed'));
+      if (origin === 'null') return callback(Object.assign(new Error('Origin not allowed'), { name: 'CorsError' }));
+      if (process.env.NODE_ENV === 'production' && origin && !origin.startsWith('https://')) return callback(Object.assign(new Error('Origin not allowed'), { name: 'CorsError' }));
 
       // 開発環境では全てのオリジンを許可
       if (process.env.NODE_ENV === 'development' && !process.env.STRICT_CORS) {
@@ -107,21 +107,10 @@ const secureCORS = () => {
         return;
       }
 
-      // サブドメインを含むドメインマッチング
-      const isAllowedDomain = allowedOrigins.some(allowed => {
-        const allowedDomain = allowed.replace(/^https?:\/\//, '');
-        const originDomain = origin.replace(/^https?:\/\//, '');
-        return originDomain === allowedDomain || originDomain.endsWith('.' + allowedDomain);
-      });
-
-      if (isAllowedDomain) {
-        callback(null, true);
-      } else {
-        if (process.env.CORS_DEBUG) {
-          console.log('[CORS] Rejected origin:', origin);
-        }
-        callback(new Error(`Origin ${origin} not allowed by CORS`));
-      }
+      // Credentialed APIs must trust exact origins, not every sibling/subdomain.
+      // Cookie auth was added to formerly bearer-only routes; implicit subdomain
+      // trust would let a compromised sibling read an admin's ambient session.
+      callback(Object.assign(new Error('Origin not allowed'), { name: 'CorsError' }));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'],

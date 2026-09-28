@@ -8,7 +8,7 @@ jest.mock('../../utils/logger/auditLogger',()=>({auditLogger:{},auditLog:jest.fn
 const {secureCORS}=require('../../middleware/security');
 const saved=process.env.NODE_ENV;
 afterEach(()=>{process.env.NODE_ENV=saved;});
-test.each(['null','http://stg.id-manager.com','https://untrusted.example'])('production CORS rejects %s',async origin=>{
+test.each(['null','http://stg.id-manager.com','https://untrusted.example','https://compromised.id-manager.com','https://evil.stg.id-manager.com'])('production CORS rejects %s',async origin=>{
   process.env.NODE_ENV='production';const app=express();app.use(secureCORS());app.get('/',(req,res)=>res.json({ok:true}));app.use((e,req,res,next)=>res.sendStatus(403));
   expect((await request(app).get('/').set('Origin',origin)).status).toBe(403);
 });

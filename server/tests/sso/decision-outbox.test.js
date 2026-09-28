@@ -128,3 +128,29 @@ test('review migration creates only decision/outbox tables and refuses destructi
   expect(query.createTable.mock.calls[1][1].id.primaryKey).toBe(true);
   await expect(migration.down()).rejects.toThrow('retained');
 });
+
+test('timeout remains retryable and operator log contains only event/status/safe summary',async()=>{
+ const {models,row}=fixture();const onResult=jest.fn();
+ axios.post.mockRejectedValueOnce(Object.assign(new Error('secret and private document path'),{code:'ECONNABORTED'}));
+ await runOnce({models,send:p=>delivery.send(p,delivery.config(settings)),onResult});
+ expect(row).toMatchObject({status:'pending',attempts:1,lastError:'TRANSPORT_ERROR'});
+ expect(onResult).toHaveBeenCalledWith({eventId:payload.eventId,status:'pending',error:'TRANSPORT_ERROR'});
+ expect(JSON.stringify(onResult.mock.calls)).not.toMatch(/secret|private|firebaseUid/);
+});
+test('active lease excludes another worker; expired lease is reclaimed and stale completion is fenced',async()=>{
+ const {models,row,model}=fixture();let release,started;
+ const gate=new Promise(r=>{release=r;}),start=new Promise(r=>{started=r;});const reports=[];
+ model.findOne.mockImplementation(async options=>{
+  const time=options.where.nextAttemptAt[Op.lte];
+  return row.status==='pending' && (!row.leaseUntil || row.leaseUntil<=time) && (!row.nextAttemptAt || row.nextAttemptAt<=time) ? row : null;
+ });
+ const first=runOnce({models,send:async()=>{started();await gate;return {delivered:true};},onResult:r=>reports.push(r)});
+ await start;
+ try {
+  const send=jest.fn();expect(await runOnce({models,send})).toBe(false);expect(send).not.toHaveBeenCalled();
+  row.leaseUntil=new Date(0);row.nextAttemptAt=new Date(0);
+  await runOnce({models,send:async()=>({delivered:false,permanent:true,error:'HTTP_400'})});
+ } finally {release();await first;}
+ expect(row).toMatchObject({status:'failed',attempts:2,lastError:'HTTP_400'});
+ expect(reports).toEqual([{eventId:payload.eventId,status:'lease_lost',error:'STALE_LEASE'}]);
+});
