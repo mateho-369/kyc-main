@@ -7,7 +7,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const auth = require('../middleware/hybrid-auth');
-const checkRole = require('../middleware/checkRole');
+const requireReviewer = require('../middleware/requireReviewer');
+const review = require('../services/performerReview');
 const { Performer, AuditLog, User } = require('../models');
 const { Op } = require('sequelize');
 const { notifySharegram } = require('../services/sharegram/sharegramWebhook');
@@ -353,99 +354,46 @@ router.get('/:id', auth, async (req, res) => {
 // @access  Private
 router.put('/:id', auth, uploadFields, async (req, res) => {
   try {
-    const performer = await Performer.findByPk(req.params.id);
-
-    if (!performer) {
-      return res.status(404).json({
-        success: false,
-        message: '出演者情報が見つかりません。'
-      });
-    }
-
-    // ユーザーロールの場合、自分が登録したデータのみ更新可能
-    if (!(await canAccessPerformer(req, performer))) {
-      return res.status(403).json({
-        success: false,
-        message: 'このデータの更新権限がありません。'
-      });
-    }
-
-    const { lastName, firstName, lastNameRoman, firstNameRoman } = req.body;
-
-    // テキストフィールドの更新
-    if (lastName) performer.lastName = lastName;
-    if (firstName) performer.firstName = firstName;
-    if (lastNameRoman) performer.lastNameRoman = lastNameRoman;
-    if (firstNameRoman) performer.firstNameRoman = firstNameRoman;
-
-    // ドキュメントの更新（新しいファイルがアップロードされた場合のみ）
-    if (req.files && Object.keys(req.files).length > 0) {
-      const currentDocs = performer.documents || {};
-      const docTypes = ['agreementFile', 'idFront', 'idBack', 'selfie', 'selfieWithId'];
-
-      for (const docType of docTypes) {
-        if (req.files[docType]) {
-          // 古いファイルを削除
-          if (currentDocs[docType] && currentDocs[docType].path) {
-            try {
-              fs.unlinkSync(currentDocs[docType].path);
-            } catch (e) {
-              console.error('旧ファイル削除エラー:', e.message);
-            }
-          }
-          // 新しいファイル情報を設定
-          currentDocs[docType] = {
-            path: req.files[docType][0].path,
-            originalName: req.files[docType][0].originalname,
-            mimeType: req.files[docType][0].mimetype,
-            verified: false
-          };
+    const performer = await Performer.sequelize.transaction(async transaction => {
+      const row = await Performer.findByPk(req.params.id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!row) review.fail(404, 'PERFORMER_NOT_FOUND');
+      if (!(await canAccessPerformer(req, row))) review.fail(403, 'OWNER_REQUIRED');
+      if (!review.reviewable(row)) review.fail(409, 'FINAL_REVIEW_RECORD_IMMUTABLE');
+      let identityChanged = false;
+      for (const field of ['lastName', 'firstName', 'lastNameRoman', 'firstNameRoman']) {
+        if (typeof req.body[field] === 'string' && req.body[field].trim()) {
+          identityChanged = identityChanged || row[field] !== req.body[field].trim();
+          row[field] = req.body[field].trim();
         }
       }
-      performer.documents = currentDocs;
-      performer.changed('documents', true);
-    }
-
-    await performer.save();
-
-    // 監査ログ記録
-    if (req.user && req.user.id) {
-      await AuditLog.create({
-        userId: req.user.id,
-        action: 'update',
-        resourceType: 'performer',
-        resourceId: performer.id,
-        details: {
-          updatedFields: Object.keys(req.body),
-          updatedDocuments: req.files ? Object.keys(req.files) : []
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent') || ''
-      });
-    }
-
-    notifySharegram('performer.updated', performer, {
-      updatedDocuments: req.files ? Object.keys(req.files) : []
+      const documents = { ...review.object(row.documents) };
+      if (identityChanged) for (const type of Object.keys(documents)) {
+        if (documents[type]) documents[type] = { ...documents[type], verified: false, verifiedAt: null, verifiedBy: null };
+      }
+      for (const type of ['agreementFile', 'idFront', 'idBack', 'selfie', 'selfieWithId']) {
+        const file = req.files?.[type]?.[0];
+        if (file) {
+          // Do not delete the old file inside a transaction: a rollback cannot
+          // restore it. Retention/cleanup of superseded files is a separate job.
+          documents[type] = { path: file.path, originalName: file.originalname, mimeType: file.mimetype, verified: false };
+        }
+      }
+      row.documents = documents;
+      row.changed('documents', true);
+      await row.save({ transaction });
+      if (req.user?.id) await AuditLog.create({ userId: req.user.id, action: 'update', resourceType: 'performer', resourceId: row.id,
+        details: { updatedFields: Object.keys(req.body), updatedDocuments: Object.keys(req.files || {}) },
+        ipAddress: req.ip, userAgent: req.get('user-agent') || '' }, { transaction });
+      return row;
     });
-
-    res.json({
-      success: true,
-      data: { performer }
-    });
-  } catch (err) {
-    console.error('出演者更新エラー:', err.message, err.stack);
-    if (req.files) {
-      Object.values(req.files).forEach(files => {
-        files.forEach(file => {
-          try { fs.unlinkSync(file.path); } catch (e) { /* ignore */ }
-        });
-      });
+    notifySharegram('performer.updated', performer, { updatedDocuments: Object.keys(req.files || {}) });
+    return res.json({ success: true, data: { performer } });
+  } catch (error) {
+    // Multer has already written newly submitted files; remove only those on failure.
+    for (const files of Object.values(req.files || {})) for (const file of files) {
+      try { fs.unlinkSync(file.path); } catch (_) { /* independent cleanup */ }
     }
-    res.status(500).json({
-      success: false,
-      message: '出演者情報の更新に失敗しました。',
-      error: err.message
-    });
+    return res.status(error.status || 500).json({ code: error.code || 'UPDATE_FAILED' });
   }
 });
 
@@ -793,7 +741,7 @@ router.get('/:id/documents/metadata', auth, async (req, res) => {
         documentMetadata.push({
           type,
           name,
-          status: doc.verified ? 'verified' : 'pending',
+          status: doc.verified ? 'verified' : doc.rejectedAt ? 'rejected' : 'pending',
           uploadedAt: doc.uploadedAt || performer.createdAt,
           verifiedAt: doc.verifiedAt || null,
           verifiedBy: doc.verifiedBy || null,
@@ -924,454 +872,106 @@ router.get('/:id/documents/:type', auth, async (req, res) => {
 // @route   PUT api/performers/:id/documents/:type/verify
 // @desc    Verify a document
 // @access  Private
-router.put('/:id/documents/:type/verify', auth, async (req, res) => {
+for (const documentAction of ['verify', 'reject']) {
+router.put(`/:id/documents/:type/${documentAction}`, auth, requireReviewer, async (req, res) => {
   try {
-    // 管理者のみ検証可能
-    // Sharegram API auth: skip admin check
-    if (!req.sharegramAuth && (!req.user || req.user.role !== 'admin')) {
-      return res.status(403).json({ message: '書類の検証は管理者のみが実行できます。' });
+    if (documentAction === 'reject' && (typeof req.body.reason !== 'string' || !req.body.reason.trim() || req.body.reason.trim().length > 2000)) {
+      return res.status(400).json({ code: 'REASON_REQUIRED_MAX_2000' });
     }
-    
-    const performer = await Performer.findByPk(req.params.id);
-    
-    if (!performer) {
-      return res.status(404).json({ 
-        success: false,
-        message: '出演者情報が見つかりません。正しいIDで再度お試しください。' 
+    const result = await Performer.sequelize.transaction(async (transaction) => {
+      const performer = await Performer.findByPk(req.params.id, {
+        transaction, lock: transaction.LOCK.UPDATE
       });
-    }
-    
-    // 画面は agreement_file、DB は agreementFile。入口で揃える（以前はここで 404 になっていた）
-    const docType = normalizeDocumentType(req.params.type);
-    const documents = { ...toDocumentsObject(performer.documents) };
-    
-    if (!documents[docType]) {
-      return res.status(404).json({ message: '指定された書類が見つかりません。正しい書類タイプを指定してください。' });
-    }
-    
-    // 書類の検証ステータスを更新
-    documents[docType].verified = true;
-    documents[docType].verifiedAt = new Date();
-    documents[docType].verifiedBy = req.user?.id;
-    
-    // 出演者データを更新
-    await Performer.update({ documents }, {
-      where: { id: req.params.id }
-    });
-    
-    // すべての必須書類が検証されたかチェック
-    const allVerified = 
-      documents.agreementFile?.verified && 
-      documents.idFront?.verified && 
-      documents.selfie?.verified;
-    
-    // すべて検証済みの場合はステータスを更新
-    if (allVerified) {
-      await Performer.update({ status: 'active' }, {
-        where: { id: req.params.id }
-      });
-    }
-    
-    // 監査ログ記録（ユーザー認証時のみ）
-    if (req.user && req.user.id) {
+      if (!performer) return { status: 404, message: 'Performer not found' };
+      if (!review.reviewable(performer) || review.object(performer.kycMetadata).reviewState === 'correction_required') {
+        return { status: 409, message: 'Performer is not submitted for review' };
+      }
+      const docType = normalizeDocumentType(req.params.type);
+      const documents = { ...toDocumentsObject(performer.documents) };
+      if (!['agreementFile', 'idFront', 'idBack', 'selfie', 'selfieWithId'].includes(docType) || !documents[docType]) {
+        return { status: 404, message: 'Document not found' };
+      }
+      documents[docType] = {
+        ...documents[docType], verified: documentAction === 'verify',
+        verifiedAt: documentAction === 'verify' ? new Date() : null, verifiedBy: documentAction === 'verify' ? req.user.id : null,
+        rejectedAt: documentAction === 'reject' ? new Date() : null, rejectedBy: documentAction === 'reject' ? req.user.id : null,
+        rejectionReason: documentAction === 'reject' ? req.body.reason.trim() : null
+      };
+      performer.documents = documents;
+      performer.changed('documents', true);
+      await performer.save({ transaction });
       await AuditLog.create({
-        userId: req.user?.id || null,
-        action: 'verify',
-        resourceType: 'document',
-        resourceId: performer.id,
-        details: { documentType: docType },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent') || ''
-      });
-    }
-
-    // 上の Performer.update はインスタンスを更新しないので、保存した値で通知する
-    const verifiedPerformer = {
-      ...performer.get({ plain: true }),
-      documents,
-      status: allVerified ? 'active' : performer.status
-    };
-    notifySharegram('document.verified', verifiedPerformer, { document: { type: docType } });
-    if (allVerified) {
-      notifySharegram('performer.approved', verifiedPerformer);
-    }
-    
-    res.json({ 
-      message: '書類が検証されました', 
-      verified: true,
-      allVerified
+        userId: req.user.id,
+        action: documentAction, resourceType: 'document', resourceId: performer.id,
+        details: { documentType: docType, ...(documentAction === 'reject' ? { reason: req.body.reason.trim() } : {}) },
+        ipAddress: req.ip, userAgent: req.get('user-agent') || ''
+      }, { transaction });
+      // Document readiness is neither a final decision nor KYC verification.
+      const allVerified = ['agreementFile', 'idFront', 'selfie']
+        .every(type => documents[type]?.verified === true);
+      return { performer, docType, allVerified };
     });
+    if (result.status) return res.status(result.status).json({ message: result.message });
+    if (documentAction === 'verify') notifySharegram('document.verified', result.performer, { document: { type: result.docType } });
+    return res.json({ message: documentAction === 'verify' ? 'Document verified' : 'Document rejected', verified: documentAction === 'verify', allVerified: result.allVerified });
   } catch (err) {
-    console.error('書類検証エラー:', err.message, err.stack);
-    res.status(500).json({ 
-      message: '書類の検証に失敗しました。', 
-      error: err.message 
-    });
+    console.error('Document verification transaction failed');
+    return res.status(500).json({ message: 'Document verification failed' });
   }
 });
+
+}
 
 // @route   POST api/performers/sync
 // @desc    Sync performers from external system (Enhanced for Sharegram)
 // @access  Private (Admin only)
-router.post('/sync', auth, async (req, res) => {
-  try {
-    // Sharegram API auth: skip admin check for system integration
-    if (!req.sharegramAuth && (!req.user || req.user.role !== 'admin')) {
-      return res.status(403).json({ 
-        success: false,
-        message: '同期処理は管理者のみが実行できます。',
-        code: 'INSUFFICIENT_PRIVILEGES'
-      });
-    }
-
-    const { performer, performers, source = 'manual', options = {} } = req.body;
-
-    // 入力データの検証 - 単一performer形式（仕様）または配列形式（後方互換）に対応
-    let performersList;
-    if (performer && typeof performer === 'object') {
-      // 仕様に準拠した単一オブジェクト形式
-      performersList = [performer];
-    } else if (performers && Array.isArray(performers)) {
-      // 後方互換性のための配列形式
-      performersList = performers;
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: '同期データが不正です。performer オブジェクトを送信してください。',
-        code: 'INVALID_INPUT_FORMAT'
-      });
-    }
-
-    if (performersList.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: '同期するperformerが指定されていません。',
-        code: 'EMPTY_PERFORMER_DATA'
-      });
-    }
-
-    // Use performersList for subsequent processing (reassign to performers for compatibility)
-    
-    // 入力データの検証
-    if (!performers || !Array.isArray(performers)) {
-      return res.status(400).json({ 
-        success: false,
-        message: '同期データが不正です。performers配列を送信してください。',
-        code: 'INVALID_INPUT_FORMAT'
-      });
-    }
-
-    if (performers.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: '同期するperformersが指定されていません。',
-        code: 'EMPTY_PERFORMERS_ARRAY'
-      });
-    }
-
-    // Sharegramソース固有の検証
-    if (source === 'sharegram') {
-      const { createSharegramClient } = require('../services/sharegram/sharegramClient');
-      try {
-        // Sharegram APIクライアントの初期化
-        const sharegramClient = await createSharegramClient(1); // デフォルトの統合ID
-        req.sharegramClient = sharegramClient;
-      } catch (error) {
-        return res.status(500).json({
-          success: false,
-          message: 'Sharegram API接続に失敗しました。',
-          code: 'SHAREGRAM_CONNECTION_FAILED',
-          error: error.message
-        });
-      }
-    }
-
-    // 同期結果の初期化
-    const startTime = Date.now();
-    const results = {
-      total: performers.length,
-      created: 0,
-      updated: 0,
-      skipped: 0,
-      errors: [],
-      source,
-      syncId: require('crypto').randomUUID(),
-      startTime: new Date().toISOString(),
-      endTime: null,
-      processingTimeMs: 0,
-      sharegramValidations: 0,
-      kycUpdates: 0
-    };
-
-    // 100件ずつバッチ処理
-    const batchSize = 100;
-    for (let i = 0; i < performers.length; i += batchSize) {
-      const batch = performers.slice(i, i + batchSize);
-      
-      // バッチ処理
-      await Promise.all(batch.map(async (performerData) => {
-        try {
-          // 必須フィールドの検証
-          const validationErrors = [];
-          
-          if (!performerData.external_id) {
-            validationErrors.push('external_idが必須です');
-          }
-          
-          if (source === 'sharegram') {
-            if (!performerData.sharegramUserId) {
-              validationErrors.push('sharegramソースの場合、sharegramUserIdが必須です');
-            }
-            if (!performerData.lastName || !performerData.firstName) {
-              validationErrors.push('姓名が必須です');
-            }
-          }
-          
-          if (validationErrors.length > 0) {
-            results.errors.push({
-              external_id: performerData.external_id || 'unknown',
-              errors: validationErrors
-            });
-            results.skipped++;
-            return;
-          }
-
-          // external_idで既存レコードを検索
-          let performer = await Performer.findOne({
-            where: { external_id: performerData.external_id }
-          });
-
-          if (performer) {
-            // 既存レコードの更新
-            const updateData = {
-              lastName: performerData.lastName || performer.lastName,
-              firstName: performerData.firstName || performer.firstName,
-              lastNameRoman: performerData.lastNameRoman || performer.lastNameRoman,
-              firstNameRoman: performerData.firstNameRoman || performer.firstNameRoman,
-              status: performerData.status || performer.status,
-              // documentsは既存のものとマージ
-              documents: {
-                ...performer.documents,
-                ...(performerData.documents || {})
-              },
-              lastSyncTime: new Date(),
-              syncSource: source
-            };
-            
-            // Sharegram固有フィールドの更新
-            if (source === 'sharegram') {
-              updateData.sharegramUserId = performerData.sharegramUserId || performer.sharegramUserId;
-              updateData.kycMetadata = {
-                ...performer.kycMetadata,
-                ...(performerData.kycMetadata || {}),
-                lastSharegramSync: new Date().toISOString()
-              };
-              
-              // KYCステータスの更新
-              if (performerData.kycStatus) {
-                updateData.kycStatus = performerData.kycStatus;
-                if (performerData.kycStatus === 'verified') {
-                  updateData.kycVerifiedAt = new Date();
-                }
-                results.kycUpdates++;
-              }
-              
-              // リスクスコアの更新
-              if (performerData.riskScore !== undefined) {
-                updateData.riskScore = performerData.riskScore;
-              }
-            }
-            
-            await performer.update(updateData);
-            results.updated++;
-          } else {
-            // 新規作成
-            const createData = {
-              external_id: performerData.external_id,
-              userId: req.user?.id || null, // 同期実行者をuserIdとして設定
-              lastName: performerData.lastName,
-              firstName: performerData.firstName,
-              lastNameRoman: performerData.lastNameRoman,
-              firstNameRoman: performerData.firstNameRoman,
-              status: performerData.status || 'pending',
-              documents: performerData.documents || {},
-              createdAt: new Date(),
-              lastSyncTime: new Date(),
-              syncSource: source
-            };
-            
-            // Sharegram固有フィールドの設定
-            if (source === 'sharegram') {
-              createData.sharegramUserId = performerData.sharegramUserId;
-              createData.kycStatus = performerData.kycStatus || 'pending';
-              createData.kycMetadata = {
-                ...(performerData.kycMetadata || {}),
-                firstSharegramSync: new Date().toISOString(),
-                lastSharegramSync: new Date().toISOString()
-              };
-              
-              if (performerData.riskScore !== undefined) {
-                createData.riskScore = performerData.riskScore;
-              }
-              
-              if (performerData.kycStatus === 'verified') {
-                createData.kycVerifiedAt = new Date();
-                results.kycUpdates++;
-              }
-            }
-            
-            performer = await Performer.create(createData);
-            results.created++;
-          }
-        } catch (error) {
-          console.error(`Performer sync error for ${performerData.external_id}:`, error);
-          results.errors.push({
-            external_id: performerData.external_id || 'unknown',
-            error: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-            timestamp: new Date().toISOString()
-          });
-          results.skipped++;
-        }
-      }));
-    }
-
-    // 結果のファイナライズ
-    results.endTime = new Date().toISOString();
-    results.processingTimeMs = Date.now() - startTime;
-    
-    // Sharegram APIのヘルスチェック（ソースがsharegramの場合）
-    if (source === 'sharegram' && req.sharegramClient) {
-      try {
-        const healthCheck = await req.sharegramClient.checkHealth();
-        results.sharegramHealthCheck = healthCheck;
-      } catch (error) {
-        console.warn('Sharegram health check failed:', error.message);
-        results.sharegramHealthCheck = { success: false, error: error.message };
-      }
-    }
-    
-    // 監査ログ記録（ユーザー認証時のみ）
-    if (req.user && req.user.id) {
-      await AuditLog.create({
-        userId: req.user?.id || null,
-        action: 'sync',
-        resourceType: 'performer',
-        resourceId: 0,
-        details: {
-          results,
-          source,
-          options,
-          syncDuration: results.processingTimeMs,
-          timestamp: results.endTime
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent') || ''
-      });
-    }
-
-    // 成功レスポンスの返却
-    res.json({
-      success: true,
-      message: `同期が完了しました。${results.created}件作成、${results.updated}件更新、${results.skipped}件スキップしました。`,
-      data: {
-        sync: results,
-        summary: {
-          totalProcessed: results.total,
-          successCount: results.created + results.updated,
-          errorCount: results.errors.length,
-          processingTime: `${results.processingTimeMs}ms`,
-          source: results.source
-        }
-      }
-    });
-  } catch (error) {
-    console.error('出演者同期エラー:', error);
-    
-    // エラー監査ログ記録
-    try {
-      await AuditLog.create({
-        userId: req.user?.id || null,
-        action: 'sync_failed',
-        resourceType: 'performer',
-        resourceId: 0,
-        details: {
-          error: error.message,
-          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-          source: req.body.source || 'unknown',
-          timestamp: new Date().toISOString()
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent') || ''
-      });
-    } catch (auditError) {
-      console.error('監査ログ記録エラー:', auditError);
-    }
-    
-    res.status(500).json({ 
-      success: false,
-      message: '同期処理中にエラーが発生しました。',
-      code: 'SYNC_PROCESSING_ERROR',
-      error: process.env.NODE_ENV === 'development' ? error.message : '内部エラーが発生しました'
-    });
-  }
-});
+router.post('/sync', auth, (req, res) => res.status(409).json({ code: 'SYNC_REVIEW_CONTRACT_REQUIRED' }));
 
 // @route   POST api/performers/:id/approve
 // @desc    Approve a performer registration
 // @access  Private (Admin only)
-router.post('/:id/approve', [auth, checkRole(['admin'])], async (req, res) => {
-  try {
-    const performer = await Performer.findByPk(req.params.id);
-    
-    if (!performer) {
-      return res.status(404).json({ message: '出演者情報が見つかりません' });
+for (const [path, action] of [['approve', 'approve'], ['reject', 'reject'], ['request-correction', 'request_correction']]) {
+  router.post(`/:id/${path}`, auth, requireReviewer, async (req, res) => {
+    try {
+      const result = await review.decide({ models: require('../models'), performerId: req.params.id,
+        actor: req.user, action, reason: req.body.reason, reasonCode: req.body.reasonCode,
+        ip: req.ip, userAgent: req.get('user-agent') });
+      return res.json({ message: 'Decision recorded', ...result });
+    } catch (error) {
+      return res.status(error.status || 500).json({ code: error.code || 'DECISION_FAILED' });
     }
-    
-    // ステータスを承認済みに更新
-    performer.status = 'active';
-    await performer.save();
-    
-    // 監査ログ記録（ユーザー認証時のみ）
-    if (req.user && req.user.id) {
-      await AuditLog.create({
-        userId: req.user?.id || null,
-        action: 'approve',
-        resourceType: 'performer',
-        resourceId: performer.id,
-        details: {
-          previousStatus: performer.status,
-          newStatus: 'active',
-          performerName: `${performer.lastName} ${performer.firstName}`
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent') || ''
-      });
-    }
-    
-    notifySharegram('performer.approved', performer);
+  });
+}
 
-    // Webhook通知をトリガー（別途実装）
-    const { triggerWebhook } = require('../services/webhookService');
-    await triggerWebhook('performer.approved', {
-      performerId: performer.id,
-      externalId: performer.external_id,
-      name: `${performer.lastName} ${performer.firstName}`,
-      approvedAt: new Date(),
-      approvedBy: req.user?.id
+router.post('/:id/resubmit', auth, async (req, res) => {
+  try {
+    const result = await Performer.sequelize.transaction(async transaction => {
+      const performer = await Performer.findByPk(req.params.id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!performer) review.fail(404, 'PERFORMER_NOT_FOUND');
+      if (req.sharegramAuth || !req.user?.id || !(await canAccessPerformer(req, performer))) review.fail(403, 'OWNER_REQUIRED');
+      const metadata = review.object(performer.kycMetadata);
+      if (!review.reviewable(performer) || metadata.reviewState !== 'correction_required') review.fail(409, 'INVALID_RESUBMISSION');
+      if (!review.REQUIRED_DOCUMENTS.every(type => review.object(performer.documents)[type])) review.fail(409, 'REQUIRED_DOCUMENTS_MISSING');
+      performer.kycMetadata = { ...metadata, reviewState: 'submitted', resubmittedAt: new Date().toISOString() };
+      performer.kycStatus = 'in_progress';
+      await performer.save({ transaction });
+      await AuditLog.create({ userId: req.user.id, action: 'resubmit', resourceType: 'performer', resourceId: performer.id,
+        details: { previousDecisionId: metadata.lastDecisionId }, ipAddress: req.ip, userAgent: req.get('user-agent') || '' }, { transaction });
+      return performer;
     });
-    
-    res.json({
-      message: '出演者が承認されました',
-      performer: performer
-    });
-  } catch (err) {
-    console.error('出演者承認エラー:', err);
-    res.status(500).json({ 
-      message: '出演者の承認に失敗しました', 
-      error: err.message 
-    });
-  }
+    return res.json({ performer: result });
+  } catch (error) { return res.status(error.status || 500).json({ code: error.code || 'RESUBMISSION_FAILED' }); }
+});
+
+// Review history / delivery status contain internal review data: local admins only.
+router.get('/:id/review-history', auth, requireReviewer, async (req, res) => {
+  const { PerformerDecision, DecisionOutbox } = require('../models');
+  await AuditLog.create({ userId: req.user.id, action: 'read_review_history', resourceType: 'performer',
+    resourceId: req.params.id, details: {}, ipAddress: req.ip, userAgent: req.get('user-agent') || '' });
+  const decisions = await PerformerDecision.findAll({ where: { performerId: req.params.id }, order: [['createdAt', 'DESC']], limit: 100 });
+  const notifications = await DecisionOutbox.findAll({ where: { performerId: req.params.id },
+    attributes: ['id', 'eventType', 'status', 'attempts', 'nextAttemptAt', 'lastError', 'sentAt'], order: [['createdAt', 'DESC']], limit: 100 });
+  return res.json({ decisions, notifications });
 });
 
 // @route   POST api/performers/registration-complete
@@ -1379,323 +979,48 @@ router.post('/:id/approve', [auth, checkRole(['admin'])], async (req, res) => {
 // @access  Private
 router.post('/registration-complete', auth, async (req, res) => {
   try {
-    // IDをリクエストボディから取得
-    const { performerId } = req.body;
-    
-    if (!performerId) {
-      return res.status(400).json({ message: '出演者IDが指定されていません' });
-    }
-    
-    const performer = await Performer.findByPk(performerId);
-    
-    if (!performer) {
-      return res.status(404).json({ message: '出演者情報が見つかりません' });
-    }
-    
-    // ユーザーロールの場合、自分が登録したデータのみアクセス可能
-    if (!(await canAccessPerformer(req, performer))) {
-      return res.status(403).json({ message: 'このデータへのアクセス権限がありません' });
-    }
-    
-    // 必須ドキュメントの確認
-    const documents = performer.documents || {};
-    const requiredDocs = ['agreementFile', 'idFront', 'selfie'];
-    const missingDocs = requiredDocs.filter(doc => !documents[doc]);
-    
-    if (missingDocs.length > 0) {
-      return res.status(400).json({ 
-        message: '必須書類が不足しています',
-        missingDocuments: missingDocs 
-      });
-    }
-    
-    // KYCステータスを更新
-    if (performer.kycStatus === 'not_started') {
-      performer.kycStatus = 'in_progress';
-    }
-    
-    // メタデータに登録完了時刻を記録
-    performer.kycMetadata = {
-      ...performer.kycMetadata,
-      registrationCompletedAt: new Date(),
-      registrationCompletedBy: req.user?.id
-    };
-    
-    await performer.save();
-    
-    // 監査ログ記録（ユーザー認証時のみ）
-    if (req.user && req.user.id) {
-      await AuditLog.create({
-        userId: req.user?.id || null,
-        action: 'complete_registration',
-        resourceType: 'performer',
-        resourceId: performer.id,
-        details: {
-          performerName: `${performer.lastName} ${performer.firstName}`,
-          kycStatus: performer.kycStatus
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent') || ''
-      });
-    }
-    
-    // Webhook通知をトリガー
-    const { triggerWebhook } = require('../services/webhookService');
-    await triggerWebhook('performer.registration_completed', {
-      performerId: performer.id,
-      externalId: performer.external_id,
-      name: `${performer.lastName} ${performer.firstName}`,
-      completedAt: new Date(),
-      userId: req.user?.id
+    const performer = await Performer.sequelize.transaction(async transaction => {
+      const row = await Performer.findByPk(req.body.performerId, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!row) review.fail(404, 'PERFORMER_NOT_FOUND');
+      if (req.sharegramAuth || !req.user?.id || !(await canAccessPerformer(req, row))) review.fail(403, 'OWNER_REQUIRED');
+      if (!review.reviewable(row) || review.object(row.kycMetadata).reviewState === 'correction_required') review.fail(409, 'INVALID_SUBMISSION');
+      if (!review.REQUIRED_DOCUMENTS.every(type => review.object(row.documents)[type])) review.fail(409, 'REQUIRED_DOCUMENTS_MISSING');
+      row.kycStatus = 'in_progress';
+      row.kycMetadata = { ...review.object(row.kycMetadata), reviewState: 'submitted', registrationCompletedAt: new Date().toISOString() };
+      await row.save({ transaction });
+      await AuditLog.create({ userId: req.user.id, action: 'complete_registration', resourceType: 'performer', resourceId: row.id,
+        details: {}, ipAddress: req.ip, userAgent: req.get('user-agent') || '' }, { transaction });
+      return row;
     });
-    
-    res.json({
-      message: '登録が完了しました',
-      performer: performer
-    });
-  } catch (err) {
-    console.error('登録完了エラー:', err);
-    res.status(500).json({ 
-      message: '登録完了処理に失敗しました', 
-      error: err.message 
-    });
-  }
+    return res.json({ performer });
+  } catch (error) { return res.status(error.status || 500).json({ code: error.code || 'SUBMISSION_FAILED' }); }
 });
 
 // @route   POST api/performers/kyc-approved
 // @desc    Handle KYC approval webhook
 // @access  Public (with signature verification)
-router.post('/kyc-approved', async (req, res) => {
-  try {
-    const crypto = require('crypto');
-
-    // Webhook signature verification (HMAC-SHA256)
-    const signature = req.headers['x-webhook-signature'];
-    const timestamp = req.headers['x-webhook-timestamp'];
-    const eventType = req.headers['x-webhook-event'] || 'kyc.approved';
-
-    if (!signature || !timestamp) {
-      return res.status(401).json({
-        error: 'Missing signature or timestamp headers'
-      });
-    }
-
-    // Timestamp freshness check (5 minutes)
-    const requestTime = new Date(timestamp);
-    const now = new Date();
-    const timeDiff = Math.abs(now - requestTime);
-
-    if (isNaN(requestTime.getTime()) || timeDiff > 5 * 60 * 1000) {
-      return res.status(401).json({
-        error: 'Request timestamp invalid or too old'
-      });
-    }
-
-    // HMAC-SHA256 signature verification
-    const webhookSecret = process.env.SHAREGRAM_WEBHOOK_SECRET;
-    if (!webhookSecret) {
-      console.error('SHAREGRAM_WEBHOOK_SECRET not configured');
-      return res.status(500).json({ error: 'Webhook verification not configured' });
-    }
-
-    const payload = timestamp + '.' + JSON.stringify(req.body);
-    const expectedSignature = 'sha256=' + crypto
-      .createHmac('sha256', webhookSecret)
-      .update(payload)
-      .digest('hex');
-
-    try {
-      const isValid = crypto.timingSafeEqual(
-        Buffer.from(signature, 'utf8'),
-        Buffer.from(expectedSignature, 'utf8')
-      );
-      if (!isValid) {
-        return res.status(401).json({ error: 'Invalid webhook signature' });
-      }
-    } catch (sigError) {
-      return res.status(401).json({ error: 'Invalid webhook signature' });
-    }
-    
-    // ペイロードの取得
-    const {
-      performerId,
-      externalId,
-      kycStatus,
-      verificationLevel,
-      verifiedAt,
-      expiresAt,
-      riskScore,
-      documents = [],
-      verificationDetails = {},
-      metadata = {}
-    } = req.body;
-    
-    // 必須フィールドの検証
-    if (!performerId || !kycStatus) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        required: ['performerId', 'kycStatus']
-      });
-    }
-    
-    // Performerの検索と更新
-    const performer = await Performer.findOne({
-      where: externalId ? { external_id: externalId } : { id: performerId }
-    });
-    
-    if (!performer) {
-      return res.status(404).json({
-        error: 'Performer not found',
-        performerId,
-        externalId
-      });
-    }
-    
-    // KYCステータスの更新
-    const previousKycStatus = performer.kycStatus;
-    performer.kycStatus = kycStatus === 'approved' ? 'verified' : kycStatus;
-    
-    if (kycStatus === 'approved' || kycStatus === 'verified') {
-      performer.kycVerifiedAt = verifiedAt || new Date();
-      performer.kycExpiresAt = expiresAt || new Date(new Date().setFullYear(new Date().getFullYear() + 1));
-    }
-    
-    if (riskScore !== undefined) {
-      performer.riskScore = riskScore;
-    }
-    
-    // KYCメタデータの更新
-    performer.kycMetadata = {
-      ...performer.kycMetadata,
-      verificationLevel,
-      verificationDetails,
-      documentsVerified: documents,
-      webhookMetadata: metadata,
-      lastKycUpdate: new Date(),
-      kycProvider: metadata.provider || 'external'
-    };
-    
-    await performer.save();
-    
-    // 監査ログ記録
-    await AuditLog.create({
-      action: 'kyc_approved',
-      resourceType: 'Performer',
-      resourceId: performer.id,
-      userId: null, // システムアクション
-      userEmail: 'webhook@system',
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-      metadata: {
-        performerId: performer.id,
-        externalId: performer.external_id,
-        previousKycStatus,
-        newKycStatus: performer.kycStatus,
-        verificationLevel,
-        riskScore,
-        webhookEvent: eventType
-      }
-    });
-    
-    // Webhook通知をトリガー（イベント配信）
-    try {
-      const { triggerWebhook } = require('../services/webhookService');
-      await triggerWebhook('kyc.approved', {
-        performer,
-        previousKycStatus,
-        kycStatus: performer.kycStatus,
-        verificationLevel,
-        verifiedAt: performer.kycVerifiedAt,
-        expiresAt: performer.kycExpiresAt,
-        riskScore,
-        documents,
-        verificationDetails
-      });
-    } catch (webhookError) {
-      console.error('Webhook trigger error:', webhookError);
-      // Webhookエラーは処理を止めない
-    }
-    
-    res.json({
-      success: true,
-      message: 'KYC approval received',
-      performerId: performer.id,
-      kycStatus: performer.kycStatus,
-      verifiedAt: performer.kycVerifiedAt
-    });
-    
-  } catch (error) {
-    console.error('KYC approval webhook error:', error);
-    res.status(500).json({
-      error: 'Failed to process KYC approval',
-      message: error.message
-    });
-  }
-});
+router.post('/kyc-approved', (req, res) => res.status(409).json({ code: 'EXTERNAL_KYC_REVIEW_CONTRACT_REQUIRED' }));
 
 // @route   DELETE api/performers/:id
 // @desc    Delete a performer
 // @access  Private
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const performer = await Performer.findByPk(req.params.id);
-    
-    if (!performer) {
-      return res.status(404).json({ 
-        success: false,
-        message: '出演者情報が見つかりません。正しいIDで再度お試しください。' 
-      });
-    }
-    
-    // ユーザーロールの場合、自分が登録したデータのみ削除可能
-    if (!(await canAccessPerformer(req, performer))) {
-      return res.status(403).json({ message: 'このデータを削除する権限がありません。' });
-    }
-    
-    // 関連するファイルを削除
-    const docData = performer.documents || {};
-    Object.values(docData).forEach(doc => {
-      if (doc && doc.path) {
-        try {
-          fs.unlinkSync(doc.path);
-        } catch (e) {
-          console.error(`ファイル削除エラー: ${e.message}`);
-        }
-      }
+    const performer = await Performer.sequelize.transaction(async transaction => {
+      const row = await Performer.findByPk(req.params.id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!row) review.fail(404, 'PERFORMER_NOT_FOUND');
+      if (!(await canAccessPerformer(req, row))) review.fail(403, 'OWNER_REQUIRED');
+      if (!review.reviewable(row)) review.fail(409, 'FINAL_REVIEW_RECORD_IMMUTABLE');
+      if (req.user?.id) await AuditLog.create({ userId: req.user.id, action: 'delete', resourceType: 'performer', resourceId: row.id,
+        details: {}, ipAddress: req.ip, userAgent: req.get('user-agent') || '' }, { transaction });
+      await Performer.destroy({ where: { id: row.id }, transaction });
+      return row;
     });
-    
-    // 監査ログ記録（ユーザー認証時のみ）（出演者削除前に記録）
-    if (req.user && req.user.id) {
-      await AuditLog.create({
-        userId: req.user?.id || null,
-        action: 'delete',
-        resourceType: 'performer',
-        resourceId: performer.id,
-        details: {
-          lastName: performer.lastName,
-          firstName: performer.firstName
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent') || ''
-      });
-    }
-    
-    // 出演者データを削除
-    await Performer.destroy({
-      where: { id: req.params.id }
-    });
-
-    // インスタンスには削除前の値が残っているので、それで通知する
+    // No file deletion in the transaction. Retained documents require an
+    // explicit retention/erasure policy rather than losing evidence on rollback.
     notifySharegram('performer.deleted', performer);
-    
-    res.json({ message: '出演者情報が削除されました' });
-  } catch (err) {
-    console.error('出演者削除エラー:', err.message, err.stack);
-    res.status(500).json({ 
-      message: '出演者情報の削除に失敗しました。', 
-      error: err.message 
-    });
-  }
+    return res.json({ message: 'Performer deleted' });
+  } catch (error) { return res.status(error.status || 500).json({ code: error.code || 'DELETE_FAILED' }); }
 });
 
 module.exports = router;

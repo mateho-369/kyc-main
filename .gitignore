@@ -150,3 +150,6 @@ firebase-adminsdk*.json
 .firebase-data/
 !/docs/SHAREGRAM_SSO_HANDOFF.md
 !/docs/PROMPT-performer-ownership.md
+
+# Disposable local build/browser validation artifacts
+/.cache/

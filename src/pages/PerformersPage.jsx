@@ -1,13 +1,17 @@
+import { ReviewBadge, reviewState } from '../components/review/ReviewStatus';
 import React, { useEffect, useState } from 'react';
 import { FiEye as Eye, FiPlus as Plus, FiUser as User, FiSearch as Search, FiFilter as Filter, FiChevronRight as ChevronRight, FiAlertCircle as AlertCircle } from 'react-icons/fi';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { getPerformers } from '../services/performerService';
 import { useAuth } from '../contexts/AuthContext';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import DocumentThumbnail from '../components/DocumentThumbnail';
 
-const PerformersPage = () => {
+const PerformersPage = ({ allowCreate = true } = {}) => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const statusFilter = searchParams.get('status') || '';
+  const [filtersOpen, setFiltersOpen] = useState(Boolean(statusFilter));
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -27,7 +31,7 @@ const PerformersPage = () => {
     const fetchPerformers = async () => {
       try {
         console.log('出演者情報を取得中...');
-        const data = await getPerformers();
+        const data = await getPerformers({ status: ['pending', 'active', 'rejected', 'inactive'].includes(statusFilter) ? statusFilter : undefined });
 
         let performersList = data;
         if (data && typeof data === 'object' && !Array.isArray(data) && data.data) {
@@ -65,7 +69,7 @@ const PerformersPage = () => {
     };
 
     fetchPerformers();
-  }, [retryCount]);
+  }, [retryCount, statusFilter]);
 
   const openPreviewModal = (performer) => {
     setPreviewModal({
@@ -84,6 +88,7 @@ const PerformersPage = () => {
   };
 
   const filteredPerformers = performers.filter(performer => {
+    if (statusFilter === 'correction' && reviewState(performer) !== 'correction') return false;
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
@@ -108,13 +113,13 @@ const PerformersPage = () => {
   if (error) {
     return (
       <div className="max-w-lg mx-auto py-12">
-        <div className="card-premium p-8 text-center">
+        <div className="card-premium p-5 sm:p-8 text-center">
           <div className="w-16 h-16 rounded-full bg-danger-50 flex items-center justify-center mx-auto mb-4">
             <AlertCircle className="w-8 h-8 text-danger-500" />
           </div>
           <h3 className="text-lg font-semibold text-navy-900 mb-2">エラーが発生しました</h3>
           <p className="text-navy-500 mb-6">{error}</p>
-          <div className="flex items-center justify-center space-x-4">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={() => {
                 setError('');
@@ -153,10 +158,10 @@ const PerformersPage = () => {
             </p>
           </div>
           <div className="mt-4 lg:mt-0">
-            <Link to="/performers/add" className="btn-gold">
+            {allowCreate && <Link to="/performers/add" className="btn-gold">
               <Plus className="w-4 h-4 mr-2" />
               出演者を追加
-            </Link>
+            </Link>}
           </div>
         </div>
       </div>
@@ -170,12 +175,13 @@ const PerformersPage = () => {
               type="text"
               placeholder="名前で検索..."
               value={searchQuery}
+              aria-label="名前で検索"
               onChange={(e) => setSearchQuery(e.target.value)}
               className="input-premium pl-12"
             />
           </div>
           <div className="flex items-center space-x-3">
-            <button className="btn-secondary">
+            <button type="button" className="btn-secondary" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(value => !value)}>
               <Filter className="w-4 h-4 mr-2" />
               フィルター
             </button>
@@ -189,6 +195,10 @@ const PerformersPage = () => {
         </div>
       </div>
 
+      {filtersOpen && <div className="card-premium p-4 mb-6"><label className="text-sm font-medium text-navy-700" htmlFor="performer-status-filter">審査ステータス</label><select id="performer-status-filter" value={statusFilter} onChange={event => { const next = new URLSearchParams(searchParams); if (event.target.value) next.set('status', event.target.value); else next.delete('status'); setSearchParams(next); }} className="input-premium mt-2">
+        <option value="">すべて</option><option value="pending">確認待ち</option><option value="active">有効</option><option value="rejected">却下</option><option value="correction">修正が必要</option><option value="inactive">無効</option>
+      </select></div>}
+
       {/* Performers List */}
       <div className="card-premium overflow-hidden">
         {filteredPerformers.length === 0 ? (
@@ -198,10 +208,10 @@ const PerformersPage = () => {
             </div>
             <h3 className="text-lg font-medium text-navy-900 mb-2">出演者が登録されていません</h3>
             <p className="text-navy-500 mb-6">新しい出演者を登録してください</p>
-            <Link to="/performers/add" className="btn-gold">
+            {allowCreate && <Link to="/performers/add" className="btn-gold">
               <Plus className="w-4 h-4 mr-2" />
               出演者を追加
-            </Link>
+            </Link>}
           </div>
         ) : (
           <div className="divide-y divide-navy-100">
@@ -211,15 +221,15 @@ const PerformersPage = () => {
                 className="p-5 hover:bg-navy-50/50 transition-colors duration-200 animate-fade-in-up"
                 style={{ animationDelay: `${index * 0.05}s` }}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
                     {/* Avatar */}
                     <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-navy-100 to-navy-200 flex items-center justify-center flex-shrink-0">
                       <User className="w-6 h-6 text-navy-500" />
                     </div>
 
                     {/* Document Thumbnails */}
-                    <div className="flex space-x-2">
+                    <div className="hidden md:flex space-x-2">
                       <DocumentThumbnail
                         performerId={performer.id}
                         documentType="selfie"
@@ -241,18 +251,18 @@ const PerformersPage = () => {
                       <h3 className="text-base font-medium text-navy-900 truncate">
                         {performer.lastName} {performer.firstName}
                       </h3>
-                      <p className="text-sm text-navy-500">
+                      <p className="text-sm text-navy-500 break-words">
                         {performer.lastNameRoman} {performer.firstNameRoman}
                       </p>
                       <div className="flex items-center space-x-3 mt-1">
-                        <span className="badge badge-success">確認済み</span>
+                        <ReviewBadge performer={performer} />
                         <span className="text-xs text-navy-400">ID: {performer.id}</span>
                       </div>
                     </div>
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center space-x-2">
+                  <div className="flex shrink-0 items-center justify-end space-x-2">
                     <button
                       onClick={() => openPreviewModal(performer)}
                       className="p-2 rounded-lg text-navy-400 hover:text-navy-600 hover:bg-navy-100 transition-colors duration-200"

@@ -20,6 +20,8 @@
     "web-vitals": "^2.1.4"
   },
   "devDependencies": {
+    "@fontsource-variable/noto-sans-jp": "^5.3.0",
+    "@fontsource-variable/outfit": "^5.3.0",
     "@playwright/test": "^1.40.1",
     "@vitest/coverage-v8": "^1.1.0",
     "autoprefixer": "^10.4.14",
@@ -46,7 +48,10 @@
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
     "lint:fix": "eslint src --ext .js,.jsx,.ts,.tsx --fix",
     "typecheck": "echo 'TypeScript check skipped - no tsconfig found'",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "preview:build": "node scripts/build-ui-preview.cjs",
+    "preview:serve": "node scripts/serve-ui-preview.cjs",
+    "preview:check": "node scripts/check-ui-preview.cjs"
   },
   "eslintConfig": {
     "extends": [

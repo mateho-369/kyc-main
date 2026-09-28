@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
+import useDialogFocus from '../hooks/useDialogFocus';
 import { FiHome as Home, FiShield as Shield, FiUser as User, FiFileText as FileText, FiX as Close } from 'react-icons/fi';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -7,8 +8,16 @@ import { useAuth } from '../contexts/AuthContext';
  * サイドバー。広い画面（lg〜）は常時表示、狭い画面は Header のメニューボタンで
  * 開くドロワーとして表示する。中身（sidebar）は同じ要素を使い回す。
  */
-const Navigation = ({ mobileOpen = false, onClose = () => {} }) => {
+const Navigation = ({ mobileOpen = false, onClose = () => {}, showAdministration = true, roleLabel }) => {
   const location = useLocation();
+  const drawerRef = useRef(null);
+  useDialogFocus(drawerRef, mobileOpen, onClose);
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)');
+    const closeOnDesktop = () => { if (media.matches) onClose(); };
+    media.addEventListener('change', closeOnDesktop);
+    return () => media.removeEventListener('change', closeOnDesktop);
+  }, [onClose]);
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -35,7 +44,7 @@ const Navigation = ({ mobileOpen = false, onClose = () => {} }) => {
   ];
 
   // Admin-only items can be added here
-  if (isAdmin) {
+  if (isAdmin && showAdministration) {
     navItems.push({
       path: '/admin/users',
       icon: User,
@@ -53,7 +62,7 @@ const Navigation = ({ mobileOpen = false, onClose = () => {} }) => {
   const sidebar = (
     <>
       {/* Logo Section */}
-      <div className="p-6 border-b border-white/10">
+      <div className="p-6 pr-12 border-b border-white/10">
         <div className="flex items-center space-x-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gold-400 to-gold-500 flex items-center justify-center">
             <Shield className="w-5 h-5 text-navy-900" />
@@ -76,6 +85,8 @@ const Navigation = ({ mobileOpen = false, onClose = () => {} }) => {
               <Link
                 key={item.path}
                 to={item.path}
+                aria-current={active ? 'page' : undefined}
+                onClick={onClose}
                 className={`sidebar-nav-item group rounded-xl ${active ? 'active' : ''}`}
               >
                 <div className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors duration-200 ${
@@ -100,7 +111,7 @@ const Navigation = ({ mobileOpen = false, onClose = () => {} }) => {
       </nav>
 
       {/* Bottom Section */}
-      <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-white/10">
+      <div className="mt-auto p-4 border-t border-white/10">
         <div className="px-4 py-3 rounded-xl bg-white/5">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-navy-600 to-navy-700 flex items-center justify-center overflow-hidden">
@@ -120,7 +131,7 @@ const Navigation = ({ mobileOpen = false, onClose = () => {} }) => {
                 {user?.name || user?.email?.split('@')[0] || 'ユーザー'}
               </p>
               <p className="text-xs text-navy-500">
-                {isAdmin ? '管理者' : 'スタンダード'}
+                {roleLabel || (isAdmin ? '管理者' : 'スタンダード')}
               </p>
             </div>
           </div>
@@ -131,17 +142,18 @@ const Navigation = ({ mobileOpen = false, onClose = () => {} }) => {
 
   return (
     <>
-      <aside className="sidebar-nav relative w-64 min-h-screen hidden lg:block">{sidebar}</aside>
+      <aside className="sidebar-nav relative w-64 shrink-0 hidden lg:flex lg:flex-col">{sidebar}</aside>
 
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="メニュー">
+        <div id="mobile-navigation" ref={drawerRef} tabIndex={-1} className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="メニュー">
           <button
             type="button"
             aria-label="メニューを閉じる"
+            tabIndex={-1}
             onClick={onClose}
             className="absolute inset-0 bg-navy-900/60 backdrop-blur-sm"
           />
-          <aside className="sidebar-nav relative w-64 min-h-screen shadow-2xl" onClick={onClose}>
+          <aside className="sidebar-nav relative w-72 max-w-[90vw] h-[100dvh] overflow-y-auto flex flex-col shadow-2xl">
             <button
               type="button"
               onClick={onClose}

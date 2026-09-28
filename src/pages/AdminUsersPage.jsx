@@ -61,7 +61,7 @@ const AdminUsersPage = () => {
 
   const getRoleBadge = (role) => {
     if (role === 'admin') {
-      return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">管理者</span>;
+      return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gold-100 text-gold-800">管理者</span>;
     }
     return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">一般</span>;
   };
@@ -109,13 +109,13 @@ const AdminUsersPage = () => {
   if (error) {
     return (
       <div className="max-w-lg mx-auto py-12">
-        <div className="card-premium p-8 text-center">
+        <div className="card-premium p-5 sm:p-8 text-center">
           <div className="w-16 h-16 rounded-full bg-danger-50 flex items-center justify-center mx-auto mb-4">
             <AlertCircle className="w-8 h-8 text-danger-500" />
           </div>
           <h3 className="text-lg font-semibold text-navy-900 mb-2">エラーが発生しました</h3>
           <p className="text-navy-500 mb-6">{error}</p>
-          <div className="flex items-center justify-center space-x-4">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={() => {
                 setError('');
@@ -199,6 +199,8 @@ const AdminUsersPage = () => {
               {users.map((userItem, index) => (
                 <div
                   key={userItem.id}
+                  role="link" tabIndex={0}
+                  onKeyDown={event => { if (event.key === 'Enter') navigate(`/admin/users/${userItem.id}`); }}
                   onClick={() => navigate(`/admin/users/${userItem.id}`)}
                   className="px-5 py-4 hover:bg-navy-50/50 transition-colors duration-200 cursor-pointer animate-fade-in-up lg:grid lg:grid-cols-12 lg:gap-4 lg:items-center"
                   style={{ animationDelay: `${index * 0.03}s` }}

@@ -398,15 +398,6 @@ h1, h2, h3, h4, h5, h6 {
    ======================================== */
 
 @media (max-width: 768px) {
-  .sidebar-nav {
-    @apply fixed inset-y-0 left-0 z-40 w-64 transform -translate-x-full;
-    transition: transform 0.3s ease;
-  }
-
-  .sidebar-nav.open {
-    @apply translate-x-0;
-  }
-
   .stats-card {
     @apply p-4;
   }

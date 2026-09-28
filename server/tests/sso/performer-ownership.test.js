@@ -14,7 +14,7 @@ const mockSelectRows = where => mockRows.filter(row => {
   return true;
 });
 jest.mock('../../models', () => ({
-  Performer: { findAndCountAll: jest.fn(async ({ where }) => { const result = mockSelectRows(where); return { count: result.length, rows: result }; }), count: jest.fn(async ({where}) => mockSelectRows(where).length), findAll: jest.fn(async ({where}) => mockRows.filter(r => Object.entries(where).every(([k,v]) => r[k] == v))), findByPk: jest.fn(async id => mockRows.find(r => r.id === Number(id))), create: jest.fn(), update: jest.fn() },
+  Performer: { sequelize: { transaction: fn => fn({ LOCK: { UPDATE: 'UPDATE' } }) }, findAndCountAll: jest.fn(async ({ where }) => { const result = mockSelectRows(where); return { count: result.length, rows: result }; }), count: jest.fn(async ({where}) => mockSelectRows(where).length), findAll: jest.fn(async ({where}) => mockRows.filter(r => Object.entries(where).every(([k,v]) => r[k] == v))), findByPk: jest.fn(async id => mockRows.find(r => r.id === Number(id))), create: jest.fn(), update: jest.fn() },
   User: { findOne: jest.fn(async ({where}) => where.firebaseUid === 'uid-a' ? {id:11} : where.firebaseUid === 'uid-b' ? {id:22} : null), findByPk: jest.fn(async id => ({id, sharegramUserId:'sg-a'})) },
   AuditLog: { create: jest.fn(async () => ({})) }
 }));
