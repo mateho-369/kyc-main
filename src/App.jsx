@@ -14,7 +14,6 @@ import AdminUsersPage from './pages/AdminUsersPage';
 import UserDetailPage from './pages/UserDetailPage';
 import SSOPage from './pages/SSOPage';
 import KYCSharegramGateway from './components/sharegram/SharegramGateway';
-import DebugTools from './components/DebugTools';
 import OfflineNotification from './components/OfflineNotification';
 // 共通（認証不要）ページ。LoginPage から /terms・/privacy へリンクがあるため
 // ルートが必須（以前はリンク先が / へリダイレクトしていた）。
@@ -159,8 +158,6 @@ function App() {
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         
-        {/* Debug Tools - 開発環境でのみ表示 */}
-        <DebugTools />
         
         {/* オフライン通知 */}
         <OfflineNotification />

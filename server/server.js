@@ -8,6 +8,7 @@ const WebSocket = require('ws');
 const envFile = process.env.NODE_ENV === 'production' ? '.env.production' : '.env';
 const envPath = path.join(__dirname, envFile);
 require('dotenv').config({ path: envPath });
+require('./scripts/check-local-config').assertProduction();
 
 // Sharegram SSO 用の設定チェック。
 // .env が読めていないだけ（リポジトリ直下に置いてしまった等）で
@@ -406,7 +407,7 @@ if (process.env.WS_HEARTBEAT_INTERVAL) {
 }
 
 // サーバー起動
-server.listen(PORT, () => {
+server.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`WebSocket server running on ${process.env.WS_PATH || '/ws'}`);
   console.log(`CORS is enabled for all origins`);

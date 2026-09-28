@@ -2,7 +2,6 @@ import axios from 'axios';
 import { auth } from '../config/firebase';
 import API_BASE_URL from '../config/apiBase';
 import securityEnhancer from './SecurityEnhancer';
-import mockApiInterceptor from './mockApiService';
 import { getAccessToken, setAccessToken, clearAccessToken } from '../utils/authToken';
 
 /**
@@ -172,16 +171,7 @@ class SecureApiClient {
                 response: initError.response?.data
               });
               
-              // セッション初期化が404エラーの場合、mockAPIを使用するか判断
-              if (initError.response?.status === 404) {
-                console.log('⚠️ セッション初期化エンドポイントが見つかりません');
-                if (mockApiInterceptor.shouldUseMock()) {
-                  console.log('🎭 Mock APIモードに切り替えます');
-                  this.isInitialized = true;
-                  this.csrfToken = 'mock-csrf-token';
-                  return this.client(originalRequest);
-                }
-              }
+
             }
           }
 
@@ -263,15 +253,6 @@ class SecureApiClient {
 
     this.sessionInitializing = true;
 
-    // Skip initialization if using mock API
-    if (mockApiInterceptor.shouldUseMock()) {
-      this.csrfToken = 'mock-csrf-token';
-      this.isInitialized = true;
-      this.sessionInitializing = false;
-      console.log('✅ Mock session initialized');
-      return { csrfToken: this.csrfToken };
-    }
-    
     try {
       const response = await this.client.post('/auth/session/init', {
         clientInfo: {
@@ -521,15 +502,6 @@ class SecureApiClient {
    * セキュアなGETリクエスト
    */
   async get(url, config = {}) {
-    // Use mock API if backend is unavailable
-    if (mockApiInterceptor.shouldUseMock()) {
-      try {
-        return await mockApiInterceptor.mockGet(url);
-      } catch (error) {
-        console.error('Mock API error:', error);
-        throw error;
-      }
-    }
     
     // 初回リクエストの場合、セッション初期化をスキップしてリトライに任せる
     if (!this.isInitialized && !this.firstRequestMade) {
@@ -543,15 +515,6 @@ class SecureApiClient {
    * セキュアなPOSTリクエスト
    */
   async post(url, data, config = {}) {
-    // Use mock API if backend is unavailable
-    if (mockApiInterceptor.shouldUseMock()) {
-      try {
-        return await mockApiInterceptor.mockPost(url, data);
-      } catch (error) {
-        console.error('Mock API error:', error);
-        throw error;
-      }
-    }
     
     // POSTリクエストの場合はセッション初期化を確実に行う
     if (!this.isInitialized) {
@@ -577,15 +540,6 @@ class SecureApiClient {
    * セキュアなPUTリクエスト
    */
   async put(url, data, config = {}) {
-    // Use mock API if backend is unavailable
-    if (mockApiInterceptor.shouldUseMock()) {
-      try {
-        return await mockApiInterceptor.mockPut(url, data);
-      } catch (error) {
-        console.error('Mock API error:', error);
-        throw error;
-      }
-    }
     
     if (!this.isInitialized) {
       await this.initializeSession();
@@ -597,15 +551,6 @@ class SecureApiClient {
    * セキュアなDELETEリクエスト
    */
   async delete(url, config = {}) {
-    // Use mock API if backend is unavailable
-    if (mockApiInterceptor.shouldUseMock()) {
-      try {
-        return await mockApiInterceptor.mockDelete(url);
-      } catch (error) {
-        console.error('Mock API error:', error);
-        throw error;
-      }
-    }
     
     if (!this.isInitialized) {
       await this.initializeSession();

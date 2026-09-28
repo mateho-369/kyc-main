@@ -1,0 +1,30 @@
+# Local dependencies ONLY, not a production deployment configuration.
+# docker compose --env-file server/.env -f compose.local.yml up -d
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: kyc_local
+      MYSQL_USER: kyc_local
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set a local MYSQL_PASSWORD in server/.env}
+      MYSQL_ROOT_PASSWORD: ${LOCAL_MYSQL_ROOT_PASSWORD:?Set a separate local root password}
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - '127.0.0.1:3307:3306'
+    volumes:
+      - kyc_local_mysql:/var/lib/mysql
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping --silent']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - '127.0.0.1:6380:6379'
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - kyc_local_redis:/data
+volumes:
+  kyc_local_mysql:
+  kyc_local_redis:

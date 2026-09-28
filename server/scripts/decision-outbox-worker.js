@@ -1,6 +1,7 @@
 'use strict';
 // Uses the same environment-file precedence as the migration CLI.
 require('../config/config');
+require('./check-local-config').assertProduction();
 const models = require('../models');
 const { sequelize } = require('../config/db');
 const delivery = require('../services/sharegram/decisionDelivery');

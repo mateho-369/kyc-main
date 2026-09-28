@@ -9,10 +9,10 @@
  *   1) .env.example を .env へコピー（既存があれば触らない。--force で置換）
  *   2) .env 内で空になっている秘密キーに、**その場で生成した**ランダム値を入れる
  *      （JWT_SECRET / JWT_REFRESH_SECRET / SESSION_SECRET / ENCRYPTION_KEY /
- *        WEBHOOK_ENCRYPTION_KEY）。コピペ用の値は最後に1回だけ表示する。
+ *        WEBHOOK_ENCRYPTION_KEY）。生成値は表示しない。
  *   3) 埋めていない必須項目を一覧表示する（Firebase 秘密鍵など。ここは人がやる）
  *
- * 注意: 生成値は標準出力に出る。ログに残らないよう、貼ったらこの出力は閉じること。
+ * 秘密キーは .env のみに保存し、ログへ出力しない。
  */
 
 const fs = require('fs');
@@ -29,6 +29,8 @@ const TARGETS = [
 
 /** 自動生成してよいキー（値が空のときだけ埋める） */
 const SECRET_KEYS = [
+  'MYSQL_PASSWORD',
+  'LOCAL_MYSQL_ROOT_PASSWORD',
   'JWT_SECRET',
   'JWT_REFRESH_SECRET',
   'SESSION_SECRET',
@@ -95,7 +97,7 @@ for (const t of TARGETS) {
   }
 
   const { text, generated } = fillSecrets(fs.readFileSync(examplePath, 'utf8'));
-  fs.writeFileSync(targetPath, text);
+  fs.writeFileSync(targetPath, text, { mode: 0o600 });
   written += 1;
   Object.entries(generated).forEach(([k, v]) => { allGenerated[`${name}:${k}`] = v; });
   console.log(`  + ${t.label}: ${name === 'frontend' ? '' : 'server/'}${t.target} を作成（秘密キー ${Object.keys(generated).length} 個を生成）`);
@@ -107,13 +109,13 @@ console.log('');
 if (written === 0) {
   console.log('既存の .env を使います。作り直すなら: npm run env:setup -- --force');
 } else {
-  console.log('生成した秘密キー（この端末の .env に入りました。再実行すると変わります）:');
-  Object.entries(allGenerated).forEach(([k, v]) => console.log(`  ${k.padEnd(34)} ${v.slice(0, 10)}…${v.slice(-4)}`));
+  console.log('生成した秘密キー（この端末の .env に入りました。既存値は保持します）:');
+  Object.keys(allGenerated).forEach(k => console.log(`  ${k}: generated (value hidden)`));
   console.log('');
   console.log('次にやること:');
   console.log('  1) server/.env の FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY を貼る');
-  console.log('     （Sharegram と同じプロジェクト: adroit-standard-496710-r5）');
+  console.log('     （Sharegram と同じ承認済み Firebase TEST プロジェクト）');
   console.log('  2) MySQL のパスワードを server/.env の MYSQL_PASSWORD に入れる');
-  console.log('  3) cd server && npm run migrate && npm run seed');
+  console.log('  3) cd server && npm run migrate');
   console.log('  4) npm start（ルート＝フロント） / cd server && npm start（API）');
 }

@@ -1,5 +1,5 @@
 const { Sequelize } = require('sequelize');
-require('dotenv').config();
+require('./loadEnv');
 
 // 環境変数から接続情報を取得（環境変数名を統一）
 const DB_HOST = process.env.MYSQL_HOST || process.env.DB_HOST || 'localhost';
@@ -47,11 +47,7 @@ const connectDB = async () => {
       await sequelize.authenticate();
       console.log('MySQL接続成功');
       
-      // 開発環境ではテーブルを自動同期（本番環境ではマイグレーションを使用したほうが良い）
-      if (process.env.NODE_ENV === 'development') {
-        await sequelize.sync({ alter: true });
-        console.log('データベーステーブルが同期されました');
-      }
+      // Schema changes are migration-only in every environment; no automatic alter.
       return true;
     } catch (err) {
       retries -= 1;

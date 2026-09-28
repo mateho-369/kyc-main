@@ -4,7 +4,7 @@
  */
 
 // Load environment variables
-require('dotenv').config();
+require('./loadEnv');
 
 // Sharegram SSO Configuration
 const sharegramConfig = {

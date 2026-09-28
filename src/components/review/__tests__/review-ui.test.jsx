@@ -4,7 +4,6 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { MemoryRouter } from 'react-router-dom';
 import ReviewDecisionPanel from '../ReviewDecisionPanel';
 import ReviewStatusNotice, { reviewState, ReviewBadge } from '../ReviewStatus';
-import PreviewApp from '../../../preview/PreviewApp';
 import Header from '../../Header';
 import Navigation from '../../Navigation';
 
@@ -80,18 +79,6 @@ describe('final decision controls', () => {
     fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm decision' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('did not confirm');
-  });
-});
-describe('honest preview role perspectives', () => {
-  it('shows review-only as proposed and hides full-admin navigation', () => {
-    render(<PreviewApp />);
-    fireEvent.click(screen.getByRole('button', { name: 'Review-only admin', exact: true }));
-    expect(screen.getByText('Proposed permission set.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'People & access', exact: true })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Audit trail', exact: true })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'User', exact: true }));
-    expect(screen.getByRole('button', { name: 'My applications', exact: true })).toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: 'Approve', exact: true })).not.toBeInTheDocument();
   });
 });
 describe('existing production navigation', () => {

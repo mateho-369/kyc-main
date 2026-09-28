@@ -10,27 +10,12 @@
  * 追跡して環境変数駆動にすることで、CLI とアプリが必ず同じ DB を
  * 見るようにする（ズレると「migrate したのにカラムが無い」になる）。
  *
- * 読み込みは server.js と同じ規則。選んだファイルが無い場合だけ
- * もう一方にフォールバックする（dotenv は既存の値を上書きしないので、
- * 先に読んだ .env 側の値が優先される）。
+ * server.js と同じ環境を選択する。production は .env.production のみ、
+ * それ以外は .env のみ。別環境のファイルにフォールバックしない。
+ * 注入済みの環境変数を dotenv が上書きすることはない。
  */
 
-const fs = require('fs');
-const path = require('path');
-
-const SERVER_DIR = path.join(__dirname, '..');
-const preferred = process.env.NODE_ENV === 'production' ? '.env.production' : '.env';
-const fallback = preferred === '.env.production' ? '.env' : '.env.production';
-
-const loaded = [];
-[preferred, fallback].forEach((name) => {
-  const file = path.join(SERVER_DIR, name);
-  if (fs.existsSync(file)) {
-    // eslint-disable-next-line global-require
-    require('dotenv').config({ path: file });
-    if (!loaded.includes(name)) loaded.push(name);
-  }
-});
+const { loadedEnvFiles: loaded } = require('./loadEnv');
 
 // server/config/db.js とまったく同じ優先順位で解決する。
 // ここだけ変えるとアプリとCLIが別DBを向くので、必ず両方を直すこと。
