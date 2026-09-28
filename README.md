@@ -70,21 +70,20 @@ cd server && npm start   # API
 cd server && npm run db:setup  # migrate (schema from zero) + seed (accounts + demo data)
 ```
 
-### Local Firebase Emulator (optional)
+### Local Sharegram/KYC SSO with real Firebase (no emulator)
 
-```bash
-npm run emulator   # Auth 9099 / Firestore 8080 / RTDB 9000 / Storage 9199 / Hosting 5000 / UI 4000
-```
+Use one dedicated Firebase project for local Sharegram and KYC testing. Do not use the Firebase Emulator for this SSO flow.
 
-- Uses `firebase.emulator.json` and the deny-all rules in `emulator/`. `firebase.json` and the
-  root `*.rules` files are the deploy config and are not touched by the emulator.
-- Accounts persist in `.firebase-data/` (git-ignored). When moving to a new checkout, copy that
-  folder too: KYC users are linked by Firebase UID, and a re-created emulator account gets a new UID.
-- Enable it on the frontend with `REACT_APP_USE_FIREBASE_EMULATOR=true` and on the API with
-  `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` (project id `demo-kyc-local` on both).
+1. Create/register a Firebase project and Web App for testing. Enable the authentication provider(s) Sharegram uses.
+2. Copy that project's Web App values into the KYC frontend `.env.local` using `.env.development.template` as a guide, and keep the API URL pointed at the local KYC API. No frontend emulator toggle is used.
+3. Configure the KYC API's local `server/.env` with the same `FIREBASE_PROJECT_ID` and that project's service-account credentials. **Do not set** `FIREBASE_AUTH_EMULATOR_HOST` or `FIRESTORE_EMULATOR_HOST`.
+4. Configure Sharegram's Firebase Web App and backend service account to the exact same project. Start the Sharegram API before testing login; its custom-token sign-in must complete so the browser can send a real Firebase ID token to KYC.
+5. Restart both frontend dev servers after changing env files. Never commit `.env.local`, `server/.env`, or service-account keys.
+
+The KYC frontend refuses to silently initialize against a hard-coded Firebase project when required Web App settings are missing. Add the new test project's values before starting it. The older emulator config and export folders are not used by this workflow; old local data is not automatically deleted.
+
 - Sending performers to Sharegram: [`docs/SHAREGRAM_KYC_WEBHOOK.md`](docs/SHAREGRAM_KYC_WEBHOOK.md).
-- Receiving users from Sharegram (`/sso?token=...`): the URL the Sharegram side must build and
-  the checks when it does not work — [`docs/SHAREGRAM_SSO_HANDOFF.md`](docs/SHAREGRAM_SSO_HANDOFF.md).
+- Receiving users from Sharegram (`/sso?token=...`): [`docs/SHAREGRAM_SSO_HANDOFF.md`](docs/SHAREGRAM_SSO_HANDOFF.md).
 
 ### Read this first
 
@@ -101,15 +100,14 @@ with a different database. A dev build prints a console warning when this is uns
 
 ### Seeding
 
-After `npm run migrate` the database has the right *shape* but **zero users**. Three
-seeders exist; all are idempotent, and `npm run seed` runs them in order
+After `npm run migrate` the database has the right *shape* but **zero users**. Two
+seeders exist; both are idempotent, and `npm run seed` runs them in order
 (or `npm run db:setup`, which is `migrate && seed`):
 
 | seeder | what it does | needs env? |
 | --- | --- | --- |
 | `0001-seed-accounts` | creates a **normal user** and an **admin** you can log in with | no (defaults below) |
 | `0002-promote-sso-admin` | promotes *your real Sharegram account* to `admin` | `SEED_ADMIN_EMAIL` |
-| `0003-seed-demo-performers` | adds a few **performers** (and matching audit rows) to those accounts so the lists are not empty | no — skip with `SEED_DEMO_DATA=false` |
 
 ```bash
 cd server
@@ -118,7 +116,7 @@ npm run seed:status                 # what has been applied
 npm run seed:undo                   # down() both seeders
 ```
 
-The dev accounts (only ever created outside production):
+Only the two development account records below are seeded; no performer or demo input rows are seeded. These accounts are created only outside production:
 
 ```
 user@example.com   /  user123    role=user

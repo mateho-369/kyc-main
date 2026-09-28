@@ -2,7 +2,7 @@ const express = require('express');
 const wrapRouter = require("../utils/wrapRouter");
 // Express 4 は async ハンドラの reject を捕捉しないため、ルーター単位で自動ラップする
 const router = wrapRouter(express.Router());
-const { Performer, AuditLog } = require('../models');
+const { Performer, AuditLog, User } = require('../models');
 const { Op } = require('sequelize');
 const { sharegramAuth } = require('../middleware/sharegram-auth');
 
@@ -25,6 +25,7 @@ router.get('/', sharegramAuth, async (req, res) => {
       status = 'active',
       external_ids,
       user_id,
+      firebase_uid,
       search,
       sort = 'createdAt'
     } = req.query;
@@ -34,18 +35,36 @@ router.get('/', sharegramAuth, async (req, res) => {
     const limitNum = Math.min(100, Math.max(1, parseInt(limit))); // 最大100件
     const offset = (pageNum - 1) * limitNum;
     
+    // Fail closed: performer IDs are not proof of ownership. Require a verified
+    // Firebase UID or a Sharegram account ID as the owner scope.
+    if (!firebase_uid && !user_id) {
+      return res.status(400).json({ error: 'owner scope required: firebase_uid / user_id' });
+    }
+
     // 検索条件の構築
     const whereClause = {};
+    if (firebase_uid) {
+      const owner = await User.findOne({
+        where: { firebaseUid: firebase_uid },
+        attributes: ['id']
+      });
+      // User primary keys are positive auto-increment integers; use an impossible
+      // owner value so the normal empty-list response shape is preserved.
+      whereClause.userId = owner ? owner.id : -1;
+    } else if (user_id) {
+      let owner = await User.findOne({ where: { firebaseUid: user_id }, attributes: ['id'] });
+      if (!owner) owner = await User.findOne({ where: { sharegramUserId: user_id }, attributes: ['id'] });
+      if (owner) whereClause.userId = owner.id;
+      else whereClause.sharegramUserId = user_id;
+    }
     
     // ステータスフィルタリング
     if (status) {
       whereClause.status = status;
     }
     
-    // user_idによるフィルタリング（特定ユーザーの出演者のみ取得）
-    if (user_id) {
-      whereClause.sharegramUserId = user_id;
-    }
+    // external_ids only narrows an already owner-scoped result; it is never an
+    // ownership credential by itself.
 
     // external_idsによるフィルタリング（Sharegramの場合）
     if (external_ids) {

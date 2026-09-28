@@ -1,28 +1,16 @@
-// Firebase fallback configuration for when Firebase is not properly initialized
+// Fail-closed fallback used only when the real Firebase Web App config is missing
+// or invalid. It must never fabricate an authenticated user.
+const firebaseUnavailable = () => Promise.reject(new Error('Firebase is not configured. Add the shared Firebase project Web App values to the local environment.'));
 const mockAuth = {
   currentUser: null,
-  signOut: async () => {
-    console.log('🔄 Mock Firebase signOut called - Firebase initialization fallback');
-    return Promise.resolve();
-  },
-  signInWithEmailAndPassword: async (email, password) => {
-    console.log('🔄 Mock Firebase signIn called - Firebase initialization fallback');
-    return Promise.resolve({ 
-      user: { 
-        email, 
-        uid: 'mock-user-id',
-        displayName: 'Mock User' 
-      } 
-    });
-  },
+  signOut: async () => Promise.resolve(),
+  signInWithEmailAndPassword: firebaseUnavailable,
+  signInWithPopup: firebaseUnavailable,
   onAuthStateChanged: (callback) => {
-    console.log('🔄 Mock Firebase onAuthStateChanged - Firebase initialization fallback');
-    // Return unsubscribe function
+    if (typeof callback === 'function') callback(null);
     return () => {};
   },
-  useDeviceLanguage: () => {
-    console.log('🔄 Mock Firebase useDeviceLanguage - Firebase initialization fallback');
-  }
+  useDeviceLanguage: () => {}
 };
 
 const mockDb = {

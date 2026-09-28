@@ -204,9 +204,12 @@ class SecureApiClient {
           }
         }
 
-        // 403エラー（CSRF等）の処理
-        if (error.response?.status === 403) {
-          // CSRFトークンの再取得を試みる
+        // Only retry CSRF-specific 403s. Permission denials (e.g. user role
+        // calling an admin-only dashboard endpoint) must not trigger a CSRF fetch.
+        const responseError = error.response?.data?.error;
+        const isCsrfFailure = ['CSRF_TOKEN_MISSING', 'CSRF_VALIDATION_FAILED'].includes(responseError)
+          || error.response?.data?.code === 'CSRF_VALIDATION_FAILED';
+        if (error.response?.status === 403 && isCsrfFailure) {
           if (!originalRequest._csrfRetry) {
             originalRequest._csrfRetry = true;
             console.log('🔄 403エラー検出、CSRFトークン再取得を試みます');
@@ -355,7 +358,7 @@ class SecureApiClient {
    */
   async refreshCSRFToken() {
     try {
-      const response = await this.client.get('/auth/csrf-token');
+      const response = await this.client.get('/csrf-token');
       this.csrfToken = response.data.csrfToken;
       console.log('✅ CSRFトークン再取得成功');
       return response.data;

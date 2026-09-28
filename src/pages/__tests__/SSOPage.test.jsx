@@ -68,6 +68,7 @@ describe('SSOPage', () => {
 
     expect(await screen.findByText(/認証エラー/)).toBeInTheDocument();
     expect(await screen.findByText(/tokenパラメータ.*送られていません/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /ログイン画面へ/ })).not.toBeInTheDocument();
     expect(createFirebaseSession).not.toHaveBeenCalled();
   });
 

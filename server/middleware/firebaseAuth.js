@@ -19,6 +19,12 @@ const { validateToken } = require('../utils/tokenValidator');
  * @returns {boolean} 初期化できたか
  */
 const initializeFirebaseAdmin = () => {
+  // This Sharegram/KYC SSO setup uses real Firebase only. The Admin SDK trusts
+  // emulator tokens when this variable is set, so reject emulator configuration.
+  if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    console.error('Firebase Auth Emulator is disabled for this KYC SSO setup; refusing Firebase authentication.');
+    return false;
+  }
   if (admin.apps.length) return true;
 
   if (process.env.DISABLE_FIREBASE === 'true') {
@@ -117,33 +123,79 @@ const upsertFirebaseUserMapping = async ({ uid, userId, email, name, picture, em
  * @returns {Object} ユーザー情報
  */
 const getOrCreateUserFromFirebase = async (decodedToken) => {
-  const { uid, email, email_verified } = decodedToken;
-  const name = decodedToken.name || decodedToken.displayName || null;
-  const picture = decodedToken.picture || decodedToken.photoURL || null;
+  const { uid } = decodedToken;
+  let email = decodedToken.email || null;
+  let emailVerified = !!decodedToken.email_verified;
+  let name = decodedToken.name || decodedToken.displayName || null;
+  let picture = decodedToken.picture || decodedToken.photoURL || null;
   const providerId = decodedToken.firebase?.sign_in_provider || 'custom';
+  // This must be a claim in the Firebase-signed ID token. Never accept an owner ID
+  // from an unverified request body or infer one from the Firebase UID.
+  const sharegramUserIdValue = decodedToken.sharegramUserId
+    ?? decodedToken.sharegram_user_id
+    ?? decodedToken.account_id;
+  const sharegramUserId = sharegramUserIdValue == null || String(sharegramUserIdValue).trim() === ''
+    ? null
+    : String(sharegramUserIdValue).trim();
+
+  // Custom-auth ID tokens do not necessarily include profile claims. Resolve them
+  // from the Firebase account record when possible; never invent an email address.
+  if ((!email || !name || !picture) && uid && admin.apps.length) {
+    try {
+      const firebaseUser = await admin.auth().getUser(uid);
+      email = email || firebaseUser.email || null;
+      emailVerified = emailVerified || !!firebaseUser.emailVerified;
+      name = name || firebaseUser.displayName || null;
+      picture = picture || firebaseUser.photoURL || null;
+    } catch (error) {
+      console.warn('Firebase profile lookup failed:', error.message);
+    }
+  }
 
   let user = await User.findOne({ where: { firebaseUid: uid } });
   if (!user && email) {
     user = await User.findOne({ where: { email } });
   }
 
+  if (sharegramUserId) {
+    const ownerOfSharegramId = await User.findOne({ where: { sharegramUserId } });
+    if (ownerOfSharegramId && (!user || Number(ownerOfSharegramId.id) !== Number(user.id))) {
+      const error = new Error('Sharegram account ID is already linked to a different KYC user.');
+      error.code = 'FIREBASE_SHAREGRAM_UID_CONFLICT';
+      throw error;
+    }
+    if (user?.sharegramUserId && String(user.sharegramUserId) !== sharegramUserId) {
+      const error = new Error('Firebase token Sharegram account ID does not match the existing KYC owner.');
+      error.code = 'FIREBASE_SHAREGRAM_UID_CONFLICT';
+      throw error;
+    }
+  }
+
   if (user) {
-    await user.update({
+    const userUpdates = {
       firebaseUid: uid,
       lastLoginAt: new Date(),
-      emailVerified: user.emailVerified || !!email_verified
-    });
+      emailVerified: user.emailVerified || emailVerified
+    };
+    if (sharegramUserId) userUpdates.sharegramUserId = sharegramUserId;
+    await user.update(userUpdates);
     console.log('✅ Firebaseユーザーを既存アカウントに紐付け:', user.id, user.email);
   } else {
+    if (!email) {
+      const error = new Error('Firebase account has no email claim or registered email; Sharegram must provide a Firebase account with an email address.');
+      error.code = 'FIREBASE_EMAIL_REQUIRED';
+      throw error;
+    }
     user = await User.create({
       email,
       name: name || email.split('@')[0],
       role: 'user',
       isActive: true,
-      emailVerified: !!email_verified,
+      emailVerified,
       authProvider: 'firebase',
       // 次回のSSOで UID から直接引けるようにする（重複アカウント防止）
       firebaseUid: uid,
+      sharegramUserId,
       lastLoginAt: new Date(),
       // users.password は NOT NULL かつ beforeCreate で bcrypt.hash() される。
       // 値が無いとユーザー作成そのものが失敗するため、推測不能な値を入れる。
@@ -158,7 +210,7 @@ const getOrCreateUserFromFirebase = async (decodedToken) => {
     email: user.email,
     name: user.name,
     picture,
-    emailVerified: email_verified,
+    emailVerified,
     providerId
   });
 
@@ -216,6 +268,14 @@ const extractFirebaseIdTokenCandidates = (req) => {
  */
 const authenticateFirebase = (options = { required: true }) => {
   return async (req, res, next) => {
+    if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+      return res.status(503).json({
+        success: false,
+        error: 'Firebase Auth Emulator is disabled for this KYC SSO setup; remove FIREBASE_AUTH_EMULATOR_HOST.',
+        code: 'FIREBASE_EMULATOR_DISABLED'
+      });
+    }
+
     // Firebaseが未設定のままリクエストを通すと、誰でも test@example.com
     // （Test User）としてログインできてしまう。開発環境であっても
     // 「認証済みのふり」をさせるのは危険なので、未設定は明示的に拒否する。
@@ -317,6 +377,7 @@ const authenticateFirebase = (options = { required: true }) => {
         name: user.name,
         role: user.role,
         firebaseUid: decodedToken.uid,
+        sharegramUserId: user.sharegramUserId || null,
         isFirebaseAuth: true
       };
 
@@ -325,6 +386,20 @@ const authenticateFirebase = (options = { required: true }) => {
       next();
     } catch (error) {
       console.error('Firebase user provisioning error:', error);
+      if (error.code === 'FIREBASE_EMAIL_REQUIRED') {
+        return res.status(422).json({
+          success: false,
+          error: error.message,
+          code: 'FIREBASE_EMAIL_REQUIRED'
+        });
+      }
+      if (error.code === 'FIREBASE_SHAREGRAM_UID_CONFLICT') {
+        return res.status(409).json({
+          success: false,
+          error: error.message,
+          code: 'FIREBASE_SHAREGRAM_UID_CONFLICT'
+        });
+      }
       return res.status(500).json({
         success: false,
         error: 'Failed to provision the authenticated user',

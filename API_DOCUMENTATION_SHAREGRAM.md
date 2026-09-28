@@ -427,3 +427,5 @@ curl -X GET "https://stg.id-manager.com/api/performers/123" \
 |------|-----------|---------|
 | 2025-12-26 | 1.1.0 | セクション3.3 Firebase SSO認証開始をチャット合意仕様に修正（エンドポイント `/sso`、パラメータ `token`, `action`, `performer_id`, `come_back_url`） |
 | 2025-12-10 | 1.0.0 | 初版作成 |
+
+**Mandatory owner scope (security):** List requests without an owner scope return `400`; neither route returns a global performer list. Use `GET /api/performers?firebase_uid=<Firebase uid>` or `GET /api/sharegram/performers?firebase_uid=<Firebase uid>` to list records owned by the corresponding authenticated KYC user. The compatible `user_id` parameter resolves to a Firebase UID first, then to a Sharegram account ID. `external_ids` may further narrow an owner-scoped result but cannot act as an owner credential. Performer creation is owned by the authenticated KYC user (`Performer.userId`); `sharegramUserId` is optional metadata and is never inferred from email, Firebase UID, or request-body input.
