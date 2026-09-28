@@ -124,7 +124,7 @@ const SSOPage = () => {
           }
           throw new Error(
             'SharegramからFirebase ID Token（tokenパラメータ）が送られていません。'
-            + ' Sharegram側の「本人確認を開始」から開き直すか、下の「ログイン画面へ」から直接ログインしてください。'
+            + ' Sharegram側の「本人確認を開始」から改めて開いてください。'
           );
         }
 
