@@ -74,7 +74,7 @@ app.use(csrfConfigProvider);
 
 // リクエストログ用ミドルウェア（デバッグ用）
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
 });
 
@@ -105,9 +105,11 @@ if (!fs.existsSync(performersUploadsDir)) {
 // e.g. GET /api/performers/:id/documents/:type
 
 // APIルートを設定する前にCORSのpreflight requestを処理
-app.options('*', cors());
+app.options('*', secureCORS());
 
 // CSRF token endpoints
+// Baseline limit applies before all API/auth mounts, including legacy endpoints.
+app.use(['/api', '/auth'], require('express-rate-limit')({ windowMs: 15 * 60 * 1000, max: 600, standardHeaders: true, legacyHeaders: false }));
 app.use('/api', require('./routes/csrf'));
 
 // Sharegram Simple API disabled: contained hardcoded test API keys (security risk)
@@ -163,7 +165,7 @@ app.use('/api/sharegram', require('./routes/sharegram'));
 // 【修正】Sharegram専用Performersエンドポイント（Bearer認証対応）
 app.use('/api/sharegram/performers', require('./routes/sharegram-performers'));
 // app.use('/api/users', require('./routes/users'));
-app.use('/test', require('./routes/test-file'));
+// File-writing diagnostics are deliberately not mounted in the application.
 
 // 緊急修正: 未マウントルートの追加（APIインフラ修正）
 // app.use('/api/webhooks', require('./routes/webhooks')); // Temporarily disabled - missing controller
@@ -244,7 +246,7 @@ app.get('*', (req, res, next) => {
   // React SPAのindex.htmlを返す
   const indexPath = path.join(__dirname, '..', 'build', 'index.html');
   if (fs.existsSync(indexPath)) {
-    console.log(`SPA fallback: ${req.originalUrl} -> index.html`);
+    console.log(`SPA fallback: ${req.path} -> index.html`);
     res.sendFile(indexPath);
   } else {
     next();
@@ -350,7 +352,7 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
-      console.log('Received WebSocket message:', data);
+      // Never log arbitrary client payloads (they can contain tokens/PII).
       
       // エコーレスポンス
       ws.send(JSON.stringify({

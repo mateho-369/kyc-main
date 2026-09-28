@@ -23,8 +23,7 @@ const checkRole = (roles) => {
     // 🚨 CRITICAL: userオブジェクトにroleが存在しない場合
     if (!req.user.role) {
       console.log('🚨 SECURITY ALERT: User role not found', {
-        userId: req.user.id,
-        userObject: req.user
+        userId: req.user.id
       });
       return res.status(403).json({ 
         message: '権限情報が見つかりません。アクセスが拒否されました。',

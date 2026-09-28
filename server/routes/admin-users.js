@@ -4,7 +4,7 @@ const wrapRouter = require("../utils/wrapRouter");
 const router = wrapRouter(express.Router());
 const auth = require('../middleware/auth');
 const checkRole = require('../middleware/checkRole');
-const { User, Performer } = require('../models');
+const { User, Performer, AuditLog } = require('../models');
 const { Op } = require('sequelize');
 
 // 全ルートに認証 + 管理者権限チェックを適用
@@ -16,8 +16,10 @@ router.use(auth, checkRole(['admin']));
  */
 router.get('/', async (req, res) => {
   try {
-    const { search, page = 1, limit = 20 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const { search } = req.query;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
 
     // 検索条件
     const where = {};
@@ -30,7 +32,7 @@ router.get('/', async (req, res) => {
 
     const { count, rows: users } = await User.findAndCountAll({
       where,
-      attributes: { exclude: ['password'] },
+      attributes: ['id', 'name', 'email', 'role', 'authProvider', 'isActive', 'emailVerified', 'createdAt', 'lastLoginAt'],
       include: [{
         model: Performer,
         attributes: ['id']
@@ -39,6 +41,9 @@ router.get('/', async (req, res) => {
       limit: parseInt(limit),
       offset
     });
+
+    await AuditLog.create({ userId: req.user.id, action: 'read', resourceType: 'user', resourceId: 0,
+      details: { page, limit }, ipAddress: req.ip, userAgent: req.get('user-agent') || '' });
 
     // 出演者数を付与
     const usersWithCount = users.map(user => {
@@ -75,7 +80,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id, {
-      attributes: { exclude: ['password'] },
+      attributes: ['id', 'name', 'email', 'role', 'authProvider', 'isActive', 'emailVerified', 'createdAt', 'lastLoginAt'],
       include: [{
         model: Performer,
         attributes: ['id', 'lastName', 'firstName', 'lastNameRoman', 'firstNameRoman', 'status', 'kycStatus', 'createdAt']
@@ -89,6 +94,8 @@ router.get('/:id', async (req, res) => {
       });
     }
 
+    await AuditLog.create({ userId: req.user.id, action: 'read', resourceType: 'user', resourceId: user.id,
+      details: {}, ipAddress: req.ip, userAgent: req.get('user-agent') || '' });
     res.json({
       success: true,
       data: user

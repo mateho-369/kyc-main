@@ -34,6 +34,8 @@ const mockUserRow = {
   sharegramUserId: '12046'
 };
 
+jest.mock('firebase-admin', () => ({ apps: [{}], auth: () => ({ getUser: async () => ({ disabled: false }) }) }));
+
 jest.mock('../../models', () => ({
   User: {
     findByPk: jest.fn(async (id) => (Number(id) === mockUserRowId ? { ...mockUserRow } : null))
@@ -161,4 +163,34 @@ describe('保護APIのトークン解決（Cookieセッションの 401 をな�
     expect(res.status).toBe(200);
     expect(res.body.authSource).toBe('header');
   });
+});
+
+
+describe('strict local JWT verification (real crypto; DB mocked)', () => {
+  const jwt=require('jsonwebtoken');
+  const service=require('../../services/tokenService');
+  const claims={type:'access',jti:'unit-test-id',user:{id:7},exp:Math.floor(Date.now()/1000)+600};
+  const opts={issuer:'safevideo-kyc',audience:'safevideo-app',algorithm:'HS256'};
+  test.each([{issuer:'wrong'},{audience:'wrong'},{algorithm:'HS384'}])('rejects mismatched JWT properties %j',async overrides=>{
+    await expect(service.verifyToken(jwt.sign(claims,process.env.JWT_SECRET,{...opts,...overrides}))).rejects.toThrow();
+  });
+  test('requires expiration and rejects expired and forged signatures',async()=>{
+    const {exp,...withoutExp}=claims;
+    await expect(service.verifyToken(jwt.sign(withoutExp,process.env.JWT_SECRET,opts))).rejects.toThrow();
+    await expect(service.verifyToken(jwt.sign({...claims,exp:1},process.env.JWT_SECRET,opts))).rejects.toThrow();
+    await expect(service.verifyToken(jwt.sign(claims,'other-secret',opts))).rejects.toThrow();
+  });
+  test('does not refresh disabled local users',async()=>{
+    const token=await service.generateRefreshToken(mockUserRow);
+    const User=require('../../models').User;User.findByPk.mockResolvedValueOnce({...mockUserRow,isActive:false});
+    await expect(service.refreshTokens(token)).rejects.toThrow('Account unavailable');
+  });
+});
+
+
+test('stored DB role, not the JWT role field, controls reviewer authorization',async()=>{
+  const token=await tokenService.generateAccessToken({...mockUserRow,role:'admin'});
+  require('../../models').User.findByPk.mockResolvedValueOnce({...mockUserRow,role:'user'});
+  const app=express();app.get('/review',authRequired,require('../../middleware/requireReviewer'),(req,res)=>res.sendStatus(200));
+  expect((await request(app).get('/review').set('Authorization',`Bearer ${token}`)).status).toBe(403);
 });

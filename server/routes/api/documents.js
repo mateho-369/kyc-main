@@ -7,6 +7,7 @@ const { sharegramAuth } = require('../../middleware/sharegram-auth');
 const { Performer, AuditLog } = require('../../models');
 const redis = require('redis');
 const { promisify } = require('util');
+const externalOwnerScope = require('../../services/externalOwnerScope');
 
 // Redis client setup
 const redisClient = redis.createClient({
@@ -24,12 +25,8 @@ redisClient.on('connect', () => {
 });
 
 // Promisify Redis commands
-const getAsync = promisify(redisClient.get).bind(redisClient);
-const setAsync = promisify(redisClient.set).bind(redisClient);
 const delAsync = promisify(redisClient.del).bind(redisClient);
 
-// Cache TTL (5 minutes)
-const CACHE_TTL = 300;
 
 /**
  * @route   GET /api/documents/by-external-id/:external_id
@@ -50,34 +47,12 @@ router.get('/by-external-id/:external_id', sharegramAuth, async (req, res) => {
       });
     }
     
-    // Check cache first
-    const cacheKey = `documents:external_id:${external_id}`;
-    const cachedData = await getAsync(cacheKey);
-    
-    if (cachedData) {
-      console.log(`Cache hit for external_id: ${external_id}`);
-      
-      // Log API access (cached response)
-      await AuditLog.create({
-        userId: req.sharegramAuth.userId,
-        action: 'read',
-        resourceType: 'document',
-        resourceId: external_id,
-        details: {
-          source: 'cache',
-          apiClient: req.sharegramAuth.apiClient,
-          responseTime: Date.now() - startTime
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent') || ''
-      });
-      
-      return res.json(JSON.parse(cachedData));
-    }
-    
+    // Authorization must precede any cached data. No document response cache:
+    // verification/owner changes must take effect on every read.
+    const ownerScope = await externalOwnerScope(req.query);
     // Find performer by external_id
     const performer = await Performer.findOne({
-      where: { external_id },
+      where: { external_id, ...ownerScope },
       attributes: [
         'id',
         'external_id',
@@ -99,7 +74,7 @@ router.get('/by-external-id/:external_id', sharegramAuth, async (req, res) => {
         userId: req.sharegramAuth.userId,
         action: 'read',
         resourceType: 'document',
-        resourceId: external_id,
+        resourceId: 0,
         details: {
           result: 'not_found',
           apiClient: req.sharegramAuth.apiClient,
@@ -142,7 +117,7 @@ router.get('/by-external-id/:external_id', sharegramAuth, async (req, res) => {
     }
     
     // Format document response
-    const documents = performer.documents || {};
+    const documents = require('../../services/performerReview').object(performer.documents);
     const response = {
       performer: {
         id: performer.id,
@@ -190,8 +165,7 @@ router.get('/by-external-id/:external_id', sharegramAuth, async (req, res) => {
       }
     });
     
-    // Cache the response
-    await setAsync(cacheKey, JSON.stringify(response), 'EX', CACHE_TTL);
+
     
     // Log successful API access
     await AuditLog.create({
@@ -211,7 +185,8 @@ router.get('/by-external-id/:external_id', sharegramAuth, async (req, res) => {
     
     res.json(response);
   } catch (error) {
-    console.error('Document API Error:', error);
+    if (error.status === 400) return res.status(400).json({ code: 'OWNER_SCOPE_REQUIRED' });
+    console.error('Document API failed');
     res.status(500).json({
       error: 'Internal Server Error',
       message: 'An error occurred while retrieving documents'
@@ -254,14 +229,10 @@ router.post('/clear-cache/:external_id', auth, async (req, res) => {
  * Check document access permissions
  */
 async function checkDocumentAccess(authInfo, performer) {
-  // Admin API clients have full access
-  if (authInfo.apiClient === 'sharegram-admin') {
-    return true;
-  }
-  
+  // Client-selected labels do not grant admin access.
   // Check if the performer is active and verified
   if (performer.status !== 'active' || performer.kycStatus !== 'verified') {
-    // Only admin clients can access unverified performers
+    // Only the locally authenticated admin review routes can read these.
     return false;
   }
   

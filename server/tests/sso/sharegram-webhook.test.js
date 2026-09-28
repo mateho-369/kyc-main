@@ -94,7 +94,8 @@ describe('configuration', () => {
     process.env.KYC_WEBHOOK_URL = 'http://api.local-og.com:8000/v2/kyc/webhook';
     process.env.KYC_WEBHOOK_SECRET = SECRET;
     const summary = webhook.describeConfig();
-    expect(summary).toMatch(/^enabled → http:\/\/api\.local-og\.com:8000\/v2\/kyc\/webhook/);
+    expect(summary).toMatch(/^enabled \(destination configured\)/);
+    expect(summary).not.toContain(process.env.KYC_WEBHOOK_URL);
     expect(summary).not.toContain(SECRET);
   });
 });

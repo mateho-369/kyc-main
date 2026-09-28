@@ -90,16 +90,16 @@ describe('performer owner scoping', () => {
       .field('firstName', 'Creator')
       .field('lastNameRoman', 'KYC')
       .field('firstNameRoman', 'Creator')
-      .attach('agreementFile', Buffer.from('agreement'), { filename: 'agreement.pdf', contentType: 'application/pdf' })
-      .attach('idFront', Buffer.from('identity'), { filename: 'identity.jpg', contentType: 'image/jpeg' })
-      .attach('selfie', Buffer.from('selfie'), { filename: 'selfie.jpg', contentType: 'image/jpeg' });
+      .attach('agreementFile', Buffer.from('%PDF-1.4'), { filename: 'agreement.pdf', contentType: 'application/pdf' })
+      .attach('idFront', Buffer.from([255,216,255]), { filename: 'identity.jpg', contentType: 'image/jpeg' })
+      .attach('selfie', Buffer.from([255,216,255]), { filename: 'selfie.jpg', contentType: 'image/jpeg' });
 
     expect(response.status).toBe(200);
     expect(models.Performer.create).toHaveBeenCalledWith(expect.objectContaining({
       userId: 11,
       sharegramUserId: null
     }));
-    const documents = response.body.data.documents;
+    const documents = models.Performer.create.mock.calls.at(-1)[0].documents;
     for (const document of Object.values(documents)) {
       if (document?.path && fs.existsSync(document.path)) fs.unlinkSync(document.path);
     }

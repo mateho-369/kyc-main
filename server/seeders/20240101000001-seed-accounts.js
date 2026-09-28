@@ -13,7 +13,7 @@
  *   admin@example.com /  admin123     role=admin
  *
  * 【安全側】
- * ・NODE_ENV=production では throw（SEED_ALLOW_INSECURE=true のときだけ通す）。
+ * ・NODE_ENV=production では常に拒否（insecure override は無効）。
  *   弱いパスワードを許す代わりに、誤って本番DBに流し込む事故を止めるのはここ。
  * ・冪等：2回実行しても行もパスワードも増えない／変わらない。
  * ・既存行のパスワードは絶対に上書きしない（ロールだけ揃える）。
@@ -95,8 +95,8 @@ module.exports = {
     console.log('');
     console.log('[seed:accounts] ローカルでログイン確認できるアカウント:');
     created.forEach((account) => {
-      // 自分で設定したパスワードはログに出さない。既定値のときだけ表示する。
-      const shown = account.usingDefaultPassword ? account.password : '(SEED_*_PASSWORD で設定した値)';
+      // Never log passwords, including development defaults.
+      const shown = '[password redacted]';
       console.log(`    ${account.email}  /  ${shown}   →  ${account.role}`);
     });
     console.log('  ※ 共有・本番のDBでは使わないこと。消すときは SEED_UNDO_DELETE=true で npm run seed:undo');

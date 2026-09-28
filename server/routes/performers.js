@@ -9,6 +9,7 @@ const fs = require('fs');
 const auth = require('../middleware/hybrid-auth');
 const requireReviewer = require('../middleware/requireReviewer');
 const review = require('../services/performerReview');
+const documentSecurity = require('../services/documentSecurity');
 const { Performer, AuditLog, User } = require('../models');
 const { Op } = require('sequelize');
 const { notifySharegram } = require('../services/sharegram/sharegramWebhook');
@@ -34,10 +35,12 @@ const canAccessPerformer = async (req, performer) => {
   // API-key callers must carry an external owner scope; never equate an external
   // account ID with an internal KYC primary key (they are separate ID namespaces).
   if (!req.user?.id || req.sharegramAuth) {
-    const scope = req.query?.firebase_uid || req.query?.user_id || req.get?.('x-sharegram-user-id');
+    const scope = req.query?.firebase_uid || req.query?.user_id;
     if (!scope) return false;
-    if (String(scope) === String(performer.sharegramUserId)) return true;
-    const owner = await resolveExternalOwner(scope);
+    if (!req.query?.firebase_uid && String(scope) === String(performer.sharegramUserId)) return true;
+    const owner = req.query?.firebase_uid
+      ? await User.findOne({ where: { firebaseUid: scope }, attributes: ['id'] })
+      : await resolveExternalOwner(scope);
     return sameId(owner?.id, performer.userId);
   }
   return req.user.role === 'admin';
@@ -87,11 +90,7 @@ const storage = multer.diskStorage({
 
 // ファイルフィルター
 const fileFilter = (req, file, cb) => {
-  const allowedFileTypes = /jpeg|jpg|png|pdf/;
-  const extname = allowedFileTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedFileTypes.test(file.mimetype);
-  
-  if (extname && mimetype) {
+  if (documentSecurity.allowedFile(file)) {
     return cb(null, true);
   } else {
     cb(new Error('許可されているファイル形式はJPEG、PNG、PDFのみです'));
@@ -102,11 +101,11 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 20 * 1024 * 1024 } // 20MB
+  limits: { fileSize: 20 * 1024 * 1024, files: 5, fields: 20, parts: 25 } // 20MB
 });
 
 // アップロードフィールド
-const uploadFields = upload.fields([
+const receiveFiles = upload.fields([
   { name: 'agreementFile', maxCount: 1 },
   { name: 'idFront', maxCount: 1 },
   { name: 'idBack', maxCount: 1 },
@@ -114,36 +113,35 @@ const uploadFields = upload.fields([
   { name: 'selfieWithId', maxCount: 1 }
 ]);
 
+const uploadFields = (req, res, next) => receiveFiles(req, res, error => {
+  const files = Object.values(req.files || {}).flat();
+  try {
+    if (error || files.some(file => !documentSecurity.hasExpectedSignature(file))) throw error || new Error('INVALID_FILE');
+    return next();
+  } catch (_) {
+    for (const file of files) { try { fs.unlinkSync(file.path); } catch (_) {} }
+    return res.status(400).json({ code: 'INVALID_UPLOAD' });
+  }
+});
+// Reject unauthorized updates before Multer writes anything; the transaction
+// below repeats the check under a row lock to protect concurrent state changes.
+async function authorizeUpdate(req, res, next) {
+  if (req.sharegramAuth || !req.user?.id || !['admin','user'].includes(req.user.role)) return res.status(403).json({ code: 'LOCAL_USER_REQUIRED' });
+  try {
+    const row = await Performer.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ code: 'PERFORMER_NOT_FOUND' });
+    if (!(await canAccessPerformer(req, row))) return res.status(403).json({ code: 'OWNER_REQUIRED' });
+    if (!review.reviewable(row)) return res.status(409).json({ code: 'FINAL_REVIEW_RECORD_IMMUTABLE' });
+    return next();
+  } catch (_) { return res.status(503).json({ code: 'AUTHORIZATION_UNAVAILABLE' }); }
+}
+
 // @route   GET api/performers
 // @desc    Get all performers
 // @access  Private
 router.get('/', auth, async (req, res) => {
   try {
-    // データベース無効時のモックレスポンス
-    if (process.env.DISABLE_DB === 'true') {
-      const mockPerformers = [
-        {
-          id: 5558,
-          external_id: '5558',
-          lastName: 'テスト',
-          firstName: '出演者',
-          lastNameRoman: 'Test',
-          firstNameRoman: 'Performer',
-          status: 'active',
-          kycStatus: 'verified',
-          kycVerifiedAt: new Date('2024-01-01'),
-          riskScore: 0.1,
-          createdAt: new Date('2024-01-01'),
-          updatedAt: new Date('2024-01-01')
-        }
-      ];
-
-      // 仕様書に準拠したレスポンス形式
-      return res.json({
-        success: true,
-        data: mockPerformers
-      });
-    }
+    if (process.env.DISABLE_DB === 'true') return res.status(503).json({ code: 'DATABASE_DISABLED' });
 
     // Shared API-key callers must always specify an owner scope. A Firebase UID takes
     // precedence; otherwise user_id is interpreted as a Sharegram account id.
@@ -233,8 +231,8 @@ router.get('/', auth, async (req, res) => {
     }
 
     // ページネーション設定
-    const page = parseInt(req.query.page) || 1;
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 20, 100));
     const offset = (page - 1) * limit;
 
     // 総件数を取得
@@ -272,7 +270,7 @@ router.get('/', auth, async (req, res) => {
         resourceType: 'performer',
         resourceId: 0, // 全体リスト
         details: {
-          query: req.query,
+          filterKeys: Object.keys(req.query).filter(key => ['status','sort','page','limit','search','firebase_uid','user_id','external_ids'].includes(key)),
           authType: req.sharegramAuth ? 'sharegram' : 'jwt',
           apiClient: req.sharegramAuth?.apiClient
         },
@@ -292,7 +290,7 @@ router.get('/', auth, async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: '出演者情報の取得に失敗しました。', 
-      error: err.message 
+      code: 'REQUEST_FAILED'
     });
   }
 });
@@ -336,7 +334,7 @@ router.get('/:id', auth, async (req, res) => {
     res.json({
       success: true,
       data: {
-        performer: performer
+        performer: documentSecurity.publicPerformer(performer)
       }
     });
   } catch (err) {
@@ -344,7 +342,7 @@ router.get('/:id', auth, async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: '出演者情報の取得に失敗しました。', 
-      error: err.message 
+      code: 'REQUEST_FAILED'
     });
   }
 });
@@ -352,7 +350,7 @@ router.get('/:id', auth, async (req, res) => {
 // @route   PUT api/performers/:id
 // @desc    Update a performer
 // @access  Private
-router.put('/:id', auth, uploadFields, async (req, res) => {
+router.put('/:id', auth, authorizeUpdate, uploadFields, async (req, res) => {
   try {
     const performer = await Performer.sequelize.transaction(async transaction => {
       const row = await Performer.findByPk(req.params.id, { transaction, lock: transaction.LOCK.UPDATE });
@@ -387,7 +385,7 @@ router.put('/:id', auth, uploadFields, async (req, res) => {
       return row;
     });
     notifySharegram('performer.updated', performer, { updatedDocuments: Object.keys(req.files || {}) });
-    return res.json({ success: true, data: { performer } });
+    return res.json({ success: true, data: { performer: documentSecurity.publicPerformer(performer) } });
   } catch (error) {
     // Multer has already written newly submitted files; remove only those on failure.
     for (const files of Object.values(req.files || {})) for (const file of files) {
@@ -551,7 +549,7 @@ router.post('/', auth, requirePerformerOwner, uploadFields, async (req, res) => 
     // 統一されたレスポンス形式で返す
     res.json({
       success: true,
-      data: performer
+      data: documentSecurity.publicPerformer(performer)
     });
   } catch (err) {
     // より詳細なエラーログ
@@ -573,7 +571,7 @@ router.post('/', auth, requirePerformerOwner, uploadFields, async (req, res) => 
     // クライアントへのエラー応答を改善
     res.status(500).json({
       message: '出演者情報の登録に失敗しました。',
-      error: err.message
+      code: 'REQUEST_FAILED'
     });
   }
 });
@@ -687,7 +685,7 @@ router.get('/:id/documents', auth, async (req, res) => {
     console.error('書類取得エラー:', err.message, err.stack);
     res.status(500).json({ 
       message: '書類情報の取得に失敗しました。', 
-      error: err.message 
+      code: 'REQUEST_FAILED'
     });
   }
 });
@@ -833,7 +831,8 @@ router.get('/:id/documents/:type', auth, async (req, res) => {
     }
     
     // ファイル存在チェック
-    if (!fs.existsSync(docData.path)) {
+    const safePath = documentSecurity.storagePath(docData.path);
+    if (!safePath) {
       return res.status(404).json({ message: 'ファイルが存在しません' });
     }
     
@@ -848,23 +847,26 @@ router.get('/:id/documents/:type', auth, async (req, res) => {
       userAgent: req.get('user-agent') || ''
     });
     
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
     // ダウンロードモードかどうか確認
     if (req.query.download === 'true') {
       // ダウンロード用のファイル名を設定
-      const extension = path.extname(docData.path).substring(1) || 'pdf';
-      const filename = `${docType}_${performer.lastName}_${performer.firstName}.${extension}`;
-      return res.download(docData.path, filename);
+      const extension = path.extname(safePath).substring(1) || 'pdf';
+      const filename = `${docType}.${extension}`;
+      return res.download(safePath, filename);
     }
     
     // 重要な変更: リダイレクトではなく、直接ファイルを送信
-    console.log('ファイルを直接送信:', docData.path);
+
     res.setHeader('Content-Type', docData.mimeType || 'application/octet-stream');
-    res.sendFile(path.resolve(docData.path));
+    res.sendFile(safePath, error => { if (error && !res.headersSent) res.status(404).json({ code: 'DOCUMENT_UNAVAILABLE' }); });
     
   } catch (err) {
     console.error('書類取得エラー:', err);
     if (!res.headersSent) {
-      res.status(500).json({ message: 'サーバーエラー', error: err.message });
+      res.status(500).json({ message: 'サーバーエラー', code: 'REQUEST_FAILED' });
     }
   }
 });
@@ -936,7 +938,7 @@ for (const [path, action] of [['approve', 'approve'], ['reject', 'reject'], ['re
       const result = await review.decide({ models: require('../models'), performerId: req.params.id,
         actor: req.user, action, reason: req.body.reason, reasonCode: req.body.reasonCode,
         ip: req.ip, userAgent: req.get('user-agent') });
-      return res.json({ message: 'Decision recorded', ...result });
+      return res.json({ message: 'Decision recorded', ...result, performer: documentSecurity.publicPerformer(result.performer) });
     } catch (error) {
       return res.status(error.status || 500).json({ code: error.code || 'DECISION_FAILED' });
     }
@@ -959,7 +961,7 @@ router.post('/:id/resubmit', auth, async (req, res) => {
         details: { previousDecisionId: metadata.lastDecisionId }, ipAddress: req.ip, userAgent: req.get('user-agent') || '' }, { transaction });
       return performer;
     });
-    return res.json({ performer: result });
+    return res.json({ performer: documentSecurity.publicPerformer(result) });
   } catch (error) { return res.status(error.status || 500).json({ code: error.code || 'RESUBMISSION_FAILED' }); }
 });
 
@@ -992,7 +994,7 @@ router.post('/registration-complete', auth, async (req, res) => {
         details: {}, ipAddress: req.ip, userAgent: req.get('user-agent') || '' }, { transaction });
       return row;
     });
-    return res.json({ performer });
+    return res.json({ performer: documentSecurity.publicPerformer(performer) });
   } catch (error) { return res.status(error.status || 500).json({ code: error.code || 'SUBMISSION_FAILED' }); }
 });
 
@@ -1005,6 +1007,7 @@ router.post('/kyc-approved', (req, res) => res.status(409).json({ code: 'EXTERNA
 // @desc    Delete a performer
 // @access  Private
 router.delete('/:id', auth, async (req, res) => {
+  if (req.sharegramAuth || !req.user?.id) return res.status(403).json({ code: 'LOCAL_USER_REQUIRED' });
   try {
     const performer = await Performer.sequelize.transaction(async transaction => {
       const row = await Performer.findByPk(req.params.id, { transaction, lock: transaction.LOCK.UPDATE });

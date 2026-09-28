@@ -202,11 +202,14 @@ router.post('/firebase-sso', firebaseSSO_CORS(), firebaseSSOLimit, asyncHandler(
       });
     }
 
+    if (user.isActive === false || user.isLocked || firebaseUser.disabled) {
+      return res.status(403).json({ code: 'ACCOUNT_UNAVAILABLE' });
+    }
+
     // Custom claims for KYC site (ShareGram仕様対応)
     const customClaims = {
       kycSiteUser: true,
-      role: user.role,
-      userId: user.id,
+      // No global role/local-user-ID claims in the shared Firebase project.
       email: user.email,
       isNewUser,
       loginMethod: 'firebase_sso',

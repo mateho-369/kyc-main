@@ -186,7 +186,9 @@ beforeEach(() => {
   mockState.decisions.length = 0;
   mockState.outbox.length = 0;
   mockState.nextId = 2;
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kyc-docs-'));
+  const root = require('../../services/documentSecurity').ROOT;
+  fs.mkdirSync(root, { recursive: true });
+  tmpDir = fs.mkdtempSync(path.join(root, 'security-test-'));
   ['log', 'warn', 'error'].forEach((level) => consoleSpies.push(jest.spyOn(console, level).mockImplementation(() => {})));
 });
 
@@ -527,4 +529,53 @@ describe('alternate writer guardrails', () => {
     expect((await request(app).put('/api/performers/1').set(OWNER).send({ lastName: 'Changed' })).status).toBe(500);
     expect(mockState.performers.get(1).lastName).toBe('山田');
   });
+});
+
+
+describe('document security regression', () => {
+  test('unauthenticated read/write/decisions are denied', async () => {
+    for (const endpoint of ['/api/performers/1','/api/performers/1/documents/agreementFile']) expect((await request(app).get(endpoint)).status).toBe(401);
+    for (const action of ['approve','reject']) expect((await request(app).post(`/api/performers/1/${action}`).send({reason:'sample'})).status).toBe(401);
+  });
+  test('storage traversal and symlink escape fail closed',async()=>{
+    seedPerformer();
+    const row=mockState.performers.get(1), outside=path.join(os.tmpdir(),`outside-kyc-${Date.now()}.pdf`);
+    fs.writeFileSync(outside,'%PDF-private');
+    try {
+      row.documents.agreementFile.path=outside;
+      expect((await request(app).get('/api/performers/1/documents/agreementFile').set(OWNER)).status).toBe(404);
+      const link=path.join(tmpDir,'escape.pdf'); fs.symlinkSync(outside,link); row.documents.agreementFile.path=link;
+      expect((await request(app).get('/api/performers/1/documents/agreementFile').set(OWNER)).status).toBe(404);
+    } finally {fs.unlinkSync(outside);}
+  });
+  test('detail response strips storage paths and file reads prohibit caching',async()=>{
+    seedPerformer();
+    const detail=await request(app).get('/api/performers/1').set(OWNER);
+    expect(detail.status).toBe(200);expect(JSON.stringify(detail.body)).not.toContain(tmpDir);
+    const file=await request(app).get('/api/performers/1/documents/agreementFile').set(OWNER);
+    expect(file.status).toBe(200);expect(file.headers['cache-control']).toBe('private, no-store');
+    expect(file.headers['x-content-type-options']).toBe('nosniff');
+  });
+  test.each([['bad.jpg','image/jpeg','<script>'],['bad.jpg.php','image/jpeg','x'],['bad.pdf','image/jpeg','%PDF-1.4']])('rejects disguised upload %s',async(name,mime,bytes)=>{
+    seedPerformer();
+    const res=await request(app).put('/api/performers/1').set(OWNER).attach('idFront',Buffer.from(bytes),{filename:name,contentType:mime});
+    expect(res.status).toBe(400);expect(res.body.code).toBe('INVALID_UPLOAD');
+  });
+  test('denies cross-owner upload before writing a file',async()=>{
+    seedPerformer(); const root=require('../../services/documentSecurity').ROOT, before=fs.readdirSync(root).sort();
+    const res=await request(app).put('/api/performers/1').set({'x-test-role':'user','x-test-user-id':'99'}).attach('idFront',Buffer.from([255,216,255]),{filename:'front.jpg',contentType:'image/jpeg'});
+    expect(res.status).toBe(403);expect(fs.readdirSync(root).sort()).toEqual(before);
+  });
+  test('disabled database never returns a fabricated performer',async()=>{
+    process.env.DISABLE_DB='true';
+    try {const res=await request(app).get('/api/performers').set(OWNER);expect(res.status).toBe(503);expect(res.body.data).toBeUndefined();}
+    finally {delete process.env.DISABLE_DB;}
+  });
+  test('rejects uploads larger than 20 MiB and cleans the partial file',async()=>{
+    seedPerformer();const root=require('../../services/documentSecurity').ROOT,before=fs.readdirSync(root).sort();
+    const bytes=Buffer.alloc(20*1024*1024+1);bytes.write('%PDF-1.4');
+    const res=await request(app).put('/api/performers/1').set(OWNER).attach('agreementFile',bytes,{filename:'large.pdf',contentType:'application/pdf'});
+    expect(res.status).toBe(400);expect(fs.readdirSync(root).sort()).toEqual(before);
+  });
+
 });

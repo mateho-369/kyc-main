@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const admin = require('firebase-admin');
 const { User } = require('../models');
+const { getOrCreateUserFromFirebase } = require('../middleware/firebaseAuth');
 const { csrfProtection, generateCSRFToken } = require('../middleware/security');
 const { 
   validateFirebaseVerify, 
@@ -69,7 +70,7 @@ router.post('/firebase-verify', sanitizeFirebaseRequest, validateFirebaseVerify,
         throw configError;
       }
 
-      decodedToken = await admin.auth().verifyIdToken(id_token);
+      decodedToken = await admin.auth().verifyIdToken(id_token, true);
     } catch (error) {
       if (error.code === 'FIREBASE_NOT_CONFIGURED' || error.code === 'FIREBASE_EMULATOR_DISABLED') {
         console.error('Firebase設定により検証を拒否しました:', error.message);
@@ -95,29 +96,7 @@ router.post('/firebase-verify', sanitizeFirebaseRequest, validateFirebaseVerify,
     // ユーザー情報取得
     const firebaseUser = await admin.auth().getUser(decodedToken.uid);
 
-    // ローカルユーザーを作成または更新
-    let user = await User.findOne({ 
-      where: { email: firebaseUser.email } 
-    });
-
-    if (!user) {
-      // 新規ユーザー作成
-      user = await User.create({
-        email: firebaseUser.email,
-        name: firebaseUser.displayName || 'Sharegram User',
-        password: require('crypto').randomBytes(32).toString('hex'),
-        role: 'user',
-        firebaseUid: decodedToken.uid,
-        sharegramUserId: decodedToken.sharegram_user_id || null
-      });
-    } else {
-      // 既存ユーザー更新
-      await user.update({
-        name: firebaseUser.displayName || user.name,
-        firebaseUid: decodedToken.uid,
-        sharegramUserId: decodedToken.sharegram_user_id || user.sharegramUserId
-      });
-    }
+    const user = await getOrCreateUserFromFirebase(decodedToken);
 
     // ローカルセッショントークン生成
     const payload = {
@@ -241,27 +220,7 @@ router.get('/firebase-sso', sanitizeFirebaseRequest, validateFirebaseSSOQuery, a
     // ユーザー情報取得
     const firebaseUser = await admin.auth().getUser(decodedToken.uid);
 
-    // ローカルユーザーを作成または更新
-    let user = await User.findOne({ 
-      where: { email: firebaseUser.email } 
-    });
-
-    if (!user) {
-      user = await User.create({
-        email: firebaseUser.email,
-        name: firebaseUser.displayName || 'Sharegram User',
-        password: require('crypto').randomBytes(32).toString('hex'),
-        role: 'user',
-        firebaseUid: decodedToken.uid,
-        sharegramUserId: decodedToken.sharegram_user_id || null
-      });
-    } else {
-      await user.update({
-        firebaseUid: decodedToken.uid,
-        sharegramUserId: decodedToken.sharegram_user_id || user.sharegramUserId,
-        lastLogin: new Date()
-      });
-    }
+    const user = await getOrCreateUserFromFirebase(decodedToken);
 
     // ローカルセッショントークン生成
     const payload = {

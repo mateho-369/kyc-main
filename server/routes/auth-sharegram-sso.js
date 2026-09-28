@@ -1,5 +1,9 @@
 const express = require('express');
 const router = express.Router();
+// This legacy exchange minted Firebase UIDs from local numeric IDs and global
+// role claims. Keep it fail-closed until the shared identity contract is defined.
+// The supported Firebase-ID-token flow is /api/auth/firebase-session.
+router.use('/sharegram-sso', (req, res) => res.status(410).json({ code: 'LEGACY_SHAREGRAM_SSO_DISABLED' }));
 
 // AppError エラーハンドリング修正
 let AppError, AuthenticationError, ValidationError;

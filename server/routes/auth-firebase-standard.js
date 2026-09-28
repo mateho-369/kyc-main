@@ -2,12 +2,10 @@ const express = require('express');
 const wrapRouter = require("../utils/wrapRouter");
 // Express 4 は async ハンドラの reject を捕捉しないため、ルーター単位で自動ラップする
 const router = wrapRouter(express.Router());
-const crypto = require('crypto');
 const admin = require('firebase-admin');
 const { User } = require('../models');
 const { setAuthCookies } = require('../utils/auth');
 const tokenService = require('../services/tokenService');
-const { validateFirebaseClaims, sanitizeFirebaseRequest } = require('../middleware/firebase-validation');
 const { authenticateFirebase } = require('../middleware/firebaseAuth');
 const sharegramAccount = require('../services/sharegram/sharegramAccountService');
 
@@ -99,45 +97,18 @@ router.post('/firebase-session', authenticateFirebaseToken, async (req, res) => 
 
     const profile = await resolveProfile({ claims, identity, firebaseProfile, email });
 
-    // Search by Firebase UID first, then email. This prevents an account from
-    // being accidentally attached to whichever local user happens to be first.
-    let user = await User.findOne({ where: { firebaseUid: uid } });
-    if (!user) user = await User.findOne({ where: { email } });
-
-    if (!user) {
-      // 新規ユーザー作成（Sharegramのアカウントをそのまま取り込む）
-      user = await User.create({
-        email,
-        name: profile.name,
-        profilePicture: profile.avatar,
-        firebaseUid: uid,
-        emailVerified: claims.email_verified !== false,
-        role: 'user',
-        // Userモデルに存在するのは authProvider（status/provider は黙って捨てられる）
-        authProvider: 'firebase',
-        sharegramUserId: profile.sharegramUserId,
-        lastLoginAt: new Date(),
-        // users.password は NOT NULL かつ beforeCreate で bcrypt.hash() される。
-        // 値が無いとユーザー作成そのものが失敗するため、推測不能な値を入れる。
-        password: crypto.randomBytes(32).toString('hex')
-      });
-
-      console.log('✅ 新規ユーザー作成:', user.id, user.email);
-    } else {
-      // 既存ユーザー情報更新
-      await user.update({
-        lastLoginAt: new Date(),
-        firebaseUid: uid,
-        profilePicture: profile.avatar || user.profilePicture,
-        sharegramUserId: profile.sharegramUserId || user.sharegramUserId,
-        emailVerified: user.emailVerified || claims.email_verified !== false,
-        // 表示名は「本当に取れた場合」だけ上書きする。
-        // 取れないときに email のローカル部で既存名を潰さないため。
-        name: profile.name || user.name || email.split('@')[0]
-      });
-
-      console.log('✅ 既存ユーザー更新:', user.id, user.email);
+    // Identity was bound by the verified-token middleware. Never redo email
+    // linking or assign external ownership from display-profile lookup results.
+    const user = await User.findByPk(identity.id);
+    if (!user || user.firebaseUid !== uid || user.isActive === false || user.isLocked) {
+      return res.status(403).json({ success: false, code: 'ACCOUNT_UNAVAILABLE' });
     }
+    await user.update({
+      lastLoginAt: new Date(),
+      profilePicture: profile.avatar || user.profilePicture,
+      emailVerified: user.emailVerified || claims.email_verified === true,
+      name: profile.name || user.name || email.split('@')[0]
+    });
 
     // JWTトークン生成（tokenServiceを使用して互換性のあるトークンを生成）
     const accessToken = await tokenService.generateAccessToken(user, {
@@ -148,6 +119,7 @@ router.post('/firebase-session', authenticateFirebaseToken, async (req, res) => 
     });
 
     const refreshToken = await tokenService.generateRefreshToken(user, {
+      sessionStartedAt: claims.auth_time,
       sso: true,
       provider: 'firebase',
       ip: req.ip,
@@ -186,31 +158,11 @@ router.post('/firebase-session', authenticateFirebaseToken, async (req, res) => 
  * Firebaseカスタムクレーム設定
  * Sharegramユーザー情報をFirebaseに保存
  */
-router.post('/firebase-claims', sanitizeFirebaseRequest, validateFirebaseClaims, authenticateFirebaseToken, async (req, res) => {
-  try {
-    const { sharegramUserId, kycPermissions } = req.validatedData;
-    const { uid } = req.firebaseUser;
-    
-    // カスタムクレーム設定
-    await admin.auth().setCustomUserClaims(uid, {
-      sharegramUserId,
-      kycPermissions: kycPermissions || ['basic'],
-      updatedAt: new Date().toISOString()
-    });
-    
-    res.json({
-      success: true,
-      message: 'カスタムクレームを設定しました'
-    });
-    
-  } catch (error) {
-    console.error('❌ カスタムクレーム設定エラー:', error);
-    res.status(500).json({
-      success: false,
-      error: 'カスタムクレーム設定に失敗しました'
-    });
-  }
-});
+// No public self-service owner/permission mutation. The KYC namespaced claim
+// contract and privileged invitation/reconciliation workflow are not implemented.
+router.post('/firebase-claims', (req, res) => res.status(403).json({
+  success: false, code: 'CLAIM_MANAGEMENT_DISABLED'
+}));
 
 /**
  * セッション検証エンドポイント

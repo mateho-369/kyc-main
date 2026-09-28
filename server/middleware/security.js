@@ -76,16 +76,18 @@ const secureCORS = () => {
       'https://share-gram.com',
       'https://app.share-gram.com',
       'https://kddi-user.share-gram.com',
-      'null' // file:// プロトコル対応
+      // Opaque/null origins are not trusted with credentialed CORS.
     ];
 
-    additionalOrigins.forEach(origin => origins.add(origin));
+    additionalOrigins.forEach(origin => { if (process.env.NODE_ENV !== 'production' || origin.startsWith('https://')) origins.add(origin); });
     return Array.from(origins);
   };
 
   return cors({
     origin: (origin, callback) => {
       const allowedOrigins = getAllowedOrigins();
+      if (origin === 'null') return callback(new Error('Origin not allowed'));
+      if (process.env.NODE_ENV === 'production' && origin && !origin.startsWith('https://')) return callback(new Error('Origin not allowed'));
 
       // 開発環境では全てのオリジンを許可
       if (process.env.NODE_ENV === 'development' && !process.env.STRICT_CORS) {

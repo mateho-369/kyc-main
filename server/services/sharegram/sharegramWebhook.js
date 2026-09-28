@@ -68,8 +68,9 @@ const getConfigProblem = (config) => {
   try {
     parsed = new URL(config.url);
   } catch (error) {
-    return `KYC_WEBHOOK_URL is not a valid URL (${config.url})`;
+    return 'KYC_WEBHOOK_URL is not a valid URL';
   }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return 'KYC_WEBHOOK_URL must not contain credentials, query or fragment';
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return 'KYC_WEBHOOK_URL must start with http:// or https://';
   }
@@ -92,7 +93,7 @@ const describeConfig = () => {
 
   const known = config.events.filter((event) => SUPPORTED_EVENTS.includes(event));
   const unknown = config.events.filter((event) => !SUPPORTED_EVENTS.includes(event));
-  const parts = [`enabled → ${config.url}`, `events: ${known.join(', ') || '(none)'}`];
+  const parts = ['enabled (destination configured)', `events: ${known.join(', ') || '(none)'}`];
   if (unknown.length > 0) parts.push(`⚠ unknown events ignored: ${unknown.join(', ')}`);
   if (config.secret.length < 32) parts.push('⚠ KYC_WEBHOOK_SECRET is shorter than 32 characters');
   return parts.join(' | ');

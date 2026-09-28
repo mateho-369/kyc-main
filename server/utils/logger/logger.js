@@ -135,12 +135,12 @@ class StructuredLogger {
     this.logger.http('API Request', {
       type: 'api_request',
       method: req.method,
-      url: req.originalUrl,
+      url: (req.originalUrl || req.url || '').split('?')[0],
       ip: req.ip,
       userAgent: req.get('user-agent'),
       userId: req.user?.id,
       headers: this.sanitizeHeaders(req.headers),
-      query: req.query,
+      query: this.sanitizeBody(req.query),
       body: this.sanitizeBody(req.body),
       ...additionalData
     });
@@ -155,7 +155,7 @@ class StructuredLogger {
     this.logger[level]('API Response', {
       type: 'api_response',
       method: req.method,
-      url: req.originalUrl,
+      url: (req.originalUrl || req.url || '').split('?')[0],
       statusCode: res.statusCode,
       responseTime: `${responseTime}ms`,
       userId: req.user?.id,
@@ -181,7 +181,7 @@ class StructuredLogger {
     if (req) {
       errorData.request = {
         method: req.method,
-        url: req.originalUrl,
+        url: (req.originalUrl || req.url || '').split('?')[0],
         userId: req.user?.id,
         ip: req.ip
       };
@@ -261,15 +261,11 @@ class StructuredLogger {
    * ヘッダーのサニタイズ
    */
   sanitizeHeaders(headers) {
-    const sensitiveHeaders = ['authorization', 'firebase-token', 'x-api-key', 'cookie'];
     const sanitized = { ...headers };
-    
-    sensitiveHeaders.forEach(header => {
-      if (sanitized[header]) {
-        sanitized[header] = '[REDACTED]';
-      }
-    });
-    
+    for (const key of Object.keys(sanitized)) {
+      if (/authorization|cookie|token|api[-_]?key|signature/i.test(key)) sanitized[key] = '[REDACTED]';
+    }
+
     return sanitized;
   }
 
@@ -277,23 +273,16 @@ class StructuredLogger {
    * ボディのサニタイズ
    */
   sanitizeBody(body) {
-    if (!body) return body;
-    
-    const sensitiveFields = ['password', 'token', 'apiKey', 'secret', 'creditCard'];
-    const sanitized = { ...body };
-    
-    const sanitizeObject = (obj) => {
-      for (const key in obj) {
-        if (sensitiveFields.some(field => key.toLowerCase().includes(field))) {
-          obj[key] = '[REDACTED]';
-        } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-          sanitizeObject(obj[key]);
-        }
-      }
+    const seen = new WeakSet();
+    const redact = value => {
+      if (!value || typeof value !== 'object') return value;
+      if (seen.has(value)) return '[CIRCULAR]';
+      seen.add(value);
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+        /password|token|api.?key|secret|private.?key|credit.?card|document|selfie|id.?front|id.?back|agreement.?file|email|name|address|birth|phone|reason|picture|avatar/i.test(key)
+          ? '[REDACTED]' : redact(item)]));
     };
-    
-    sanitizeObject(sanitized);
-    return sanitized;
+    return redact(body);
   }
 
   /**

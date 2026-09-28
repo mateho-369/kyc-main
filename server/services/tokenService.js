@@ -108,6 +108,7 @@ class TokenService {
       jti,
       type: 'refresh',
       iat: now,
+      sessionStartedAt: options.sessionStartedAt ?? now,
       ...(options.sso && { sso: true, provider: options.provider })
     };
 
@@ -143,8 +144,12 @@ class TokenService {
       
       const decoded = jwt.verify(token, secret, {
         issuer: this.JWT_ISSUER,
-        audience: this.JWT_AUDIENCE
+        audience: this.JWT_AUDIENCE,
+        algorithms: ['HS256']
       });
+      if (!Number.isFinite(decoded.exp) || !decoded.jti || !(type === 'refresh' ? decoded.userId : decoded.user?.id)) {
+        throw new AppError('Invalid token claims', 401);
+      }
 
       // トークンタイプ確認
       if (decoded.type !== type) {
@@ -194,6 +199,9 @@ class TokenService {
         throw new AppError('User not found', 404);
       }
 
+      if (!user.isActive || user.isLocked) throw new AppError('Account unavailable', 403);
+      await require('./firebaseSessionPolicy')(user, decoded);
+
       // 古いリフレッシュトークンを無効化
       await this.revokeToken(decoded.jti);
 
@@ -206,6 +214,7 @@ class TokenService {
       });
 
       const newRefreshToken = await this.generateRefreshToken(user, {
+        sessionStartedAt: decoded.sessionStartedAt ?? decoded.iat,
         sso: decoded.sso,
         provider: decoded.provider,
         ip: options.ip,

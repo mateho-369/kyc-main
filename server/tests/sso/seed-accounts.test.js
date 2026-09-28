@@ -107,14 +107,14 @@ describe('seed: accounts', () => {
     expect(model.User.create).not.toHaveBeenCalled();
   });
 
-  it('runs in production only when the operator insists', async () => {
+  it('refuses production sample accounts even with the old insecure override', async () => {
     process.env.NODE_ENV = 'production';
     process.env.SEED_ALLOW_INSECURE = 'true';
     const model = makeModel();
 
-    await load(model).up();
+    await expect(load(model).up()).rejects.toThrow(/production/);
 
-    expect(model.User.create).toHaveBeenCalledTimes(2);
+    expect(model.User.create).not.toHaveBeenCalled();
   });
 
   it('is a no-op when DISABLE_DB=true', async () => {
@@ -191,7 +191,8 @@ describe('seed: accounts', () => {
     expect(created(model).map((r) => r.email)).toContain('kyoko@example.com');
     const printed = log.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(printed).not.toContain('my-own-secret');
-    expect(printed).toContain('SEED_*_PASSWORD で設定した値');
+    expect(printed).toContain('[password redacted]');
+    expect(printed).not.toContain('admin123');
   });
 
   it('skips an account whose email is not a valid address', async () => {

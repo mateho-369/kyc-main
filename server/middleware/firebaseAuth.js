@@ -73,9 +73,9 @@ const generateUnusablePassword = () =>
  *
  * このテーブルは Users とアソシエーションが定義されていないため
  * include は使えない。また写真URL等はバリデーションを持つので、
- * 書き込みに失敗してもログイン自体は止めない（ログのみ）。
+ * Provisioning and identity mapping now commit together or fail closed.
  */
-const upsertFirebaseUserMapping = async ({ uid, userId, email, name, picture, emailVerified, providerId }) => {
+const upsertFirebaseUserMapping = async ({ uid, userId, email, name, picture, emailVerified, providerId, transaction }) => {
   try {
     const values = {
       userId,
@@ -91,22 +91,25 @@ const upsertFirebaseUserMapping = async ({ uid, userId, email, name, picture, em
 
     const [mapping, created] = await FirebaseUser.findOrCreate({
       where: { firebaseUid: uid },
-      defaults: { firebaseUid: uid, ...values }
+      defaults: { firebaseUid: uid, ...values }, transaction
     });
 
+    if (mapping.userId && Number(mapping.userId) !== Number(userId)) {
+      throw Object.assign(new Error('Conflicting Firebase identity mapping.'), { code: 'FIREBASE_ACCOUNT_LINK_REQUIRED', status: 409 });
+    }
     if (!created) {
       await mapping.update({
         ...values,
         userId: mapping.userId || userId,
         displayName: values.displayName || mapping.displayName,
         photoURL: values.photoURL || mapping.photoURL
-      });
+      }, { transaction });
     }
 
     return mapping;
   } catch (error) {
-    console.warn('FirebaseUser mapping could not be saved (login continues):', error.message);
-    return null;
+    // Do not leave a partially provisioned identity if its binding cannot be saved.
+    throw error;
   }
 };
 
@@ -114,7 +117,7 @@ const upsertFirebaseUserMapping = async ({ uid, userId, email, name, picture, em
  * Firebaseトークンからユーザーを取得または作成する。
  *
  * 1. Firebase UID で既存ユーザーを探す
- * 2. 無ければメールアドレスで探す（Sharegramと同じメールなら同一人物）
+ * 2. Email collision requires explicit account linking; never infer ownership.
  * 3. それでも無ければ新規作成
  *
  * どの経路でも「共有のテストユーザー」を返すことはない。
@@ -152,69 +155,80 @@ const getOrCreateUserFromFirebase = async (decodedToken) => {
     }
   }
 
-  let user = await User.findOne({ where: { firebaseUid: uid } });
-  if (!user && email) {
-    user = await User.findOne({ where: { email } });
-  }
+  return User.sequelize.transaction(async transaction => {
+    let user = await User.findOne({ where: { firebaseUid: uid }, transaction, lock: transaction.LOCK.UPDATE });
+    if (!user && email) {
+      const emailOwner = await User.findOne({ where: { email }, transaction, lock: transaction.LOCK.UPDATE });
+      // Email equality is not authorization to link (or replace) a local identity,
+      // especially an administrator. Linking requires a separate verified workflow.
+      if (emailOwner) throw Object.assign(new Error('Explicit account linking is required.'), {
+        code: 'FIREBASE_ACCOUNT_LINK_REQUIRED', status: 409
+      });
+    }
 
-  if (sharegramUserId) {
-    const ownerOfSharegramId = await User.findOne({ where: { sharegramUserId } });
-    if (ownerOfSharegramId && (!user || Number(ownerOfSharegramId.id) !== Number(user.id))) {
-      const error = new Error('Sharegram account ID is already linked to a different KYC user.');
-      error.code = 'FIREBASE_SHAREGRAM_UID_CONFLICT';
-      throw error;
+    if (user && (!user.isActive || user.isLocked)) {
+      throw Object.assign(new Error('Account unavailable.'), { code: 'ACCOUNT_UNAVAILABLE', status: 403 });
     }
-    if (user?.sharegramUserId && String(user.sharegramUserId) !== sharegramUserId) {
-      const error = new Error('Firebase token Sharegram account ID does not match the existing KYC owner.');
-      error.code = 'FIREBASE_SHAREGRAM_UID_CONFLICT';
-      throw error;
-    }
-  }
 
-  if (user) {
-    const userUpdates = {
-      firebaseUid: uid,
-      lastLoginAt: new Date(),
-      emailVerified: user.emailVerified || emailVerified
-    };
-    if (sharegramUserId) userUpdates.sharegramUserId = sharegramUserId;
-    await user.update(userUpdates);
-    console.log('✅ Firebaseユーザーを既存アカウントに紐付け:', user.id, user.email);
-  } else {
-    if (!email) {
-      const error = new Error('Firebase account has no email claim or registered email; Sharegram must provide a Firebase account with an email address.');
-      error.code = 'FIREBASE_EMAIL_REQUIRED';
-      throw error;
+    if (sharegramUserId) {
+      const ownerOfSharegramId = await User.findOne({ where: { sharegramUserId }, transaction, lock: transaction.LOCK.UPDATE });
+      if (ownerOfSharegramId && (!user || Number(ownerOfSharegramId.id) !== Number(user.id))) {
+        const error = new Error('Sharegram account ID is already linked to a different KYC user.');
+        error.code = 'FIREBASE_SHAREGRAM_UID_CONFLICT';
+        throw error;
+      }
+      if (user?.sharegramUserId && String(user.sharegramUserId) !== sharegramUserId) {
+        const error = new Error('Firebase token Sharegram account ID does not match the existing KYC owner.');
+        error.code = 'FIREBASE_SHAREGRAM_UID_CONFLICT';
+        throw error;
+      }
     }
-    user = await User.create({
-      email,
-      name: name || email.split('@')[0],
-      role: 'user',
-      isActive: true,
+
+    if (user) {
+      const userUpdates = {
+        firebaseUid: uid,
+        lastLoginAt: new Date(),
+        emailVerified: user.emailVerified || emailVerified
+      };
+      if (sharegramUserId) userUpdates.sharegramUserId = sharegramUserId;
+      await user.update(userUpdates, { transaction });
+      console.log('Firebase identity loaded:', user.id);
+    } else {
+      if (!email) {
+        const error = new Error('Firebase account has no email claim or registered email; Sharegram must provide a Firebase account with an email address.');
+        error.code = 'FIREBASE_EMAIL_REQUIRED';
+        throw error;
+      }
+      user = await User.create({
+        email,
+        name: name || email.split('@')[0],
+        role: 'user',
+        isActive: true,
+        emailVerified,
+        authProvider: 'firebase',
+        // 次回のSSOで UID から直接引けるようにする（重複アカウント防止）
+        firebaseUid: uid,
+        sharegramUserId,
+        lastLoginAt: new Date(),
+        // users.password は NOT NULL かつ beforeCreate で bcrypt.hash() される。
+        // 値が無いとユーザー作成そのものが失敗するため、推測不能な値を入れる。
+        password: generateUnusablePassword()
+      }, { transaction });
+      console.log('Firebase identity provisioned:', user.id);
+    }
+
+    await upsertFirebaseUserMapping({
+      uid,
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      picture,
       emailVerified,
-      authProvider: 'firebase',
-      // 次回のSSOで UID から直接引けるようにする（重複アカウント防止）
-      firebaseUid: uid,
-      sharegramUserId,
-      lastLoginAt: new Date(),
-      // users.password は NOT NULL かつ beforeCreate で bcrypt.hash() される。
-      // 値が無いとユーザー作成そのものが失敗するため、推測不能な値を入れる。
-      password: generateUnusablePassword()
+      providerId, transaction
     });
-    console.log('✅ Firebaseユーザーを新規作成:', user.id, user.email);
-  }
 
-  await upsertFirebaseUserMapping({
-    uid,
-    userId: user.id,
-    email: user.email,
-    name: user.name,
-    picture,
-    emailVerified,
-    providerId
+    return user;
   });
-
-  return user;
 };
 
 /**
@@ -360,7 +374,7 @@ const authenticateFirebase = (options = { required: true }) => {
 
     try {
       // カスタムクレームをチェック（オプション）
-      if (decodedToken.customClaims && decodedToken.customClaims.blocked) {
+      if (decodedToken.blocked === true || decodedToken.customClaims?.blocked === true) {
         return res.status(403).json({
           success: false,
           error: 'User account is blocked'
@@ -385,7 +399,10 @@ const authenticateFirebase = (options = { required: true }) => {
 
       next();
     } catch (error) {
-      console.error('Firebase user provisioning error:', error);
+      console.error('Firebase user provisioning failed:', error.code || 'PROVISIONING_FAILED');
+      if (['FIREBASE_ACCOUNT_LINK_REQUIRED', 'ACCOUNT_UNAVAILABLE'].includes(error.code)) {
+        return res.status(error.status).json({ success: false, code: error.code });
+      }
       if (error.code === 'FIREBASE_EMAIL_REQUIRED') {
         return res.status(422).json({
           success: false,

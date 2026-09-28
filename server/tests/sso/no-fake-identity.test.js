@@ -68,9 +68,10 @@ describe('/api/auth/custom-token がFirebase未設定時に正直に失敗する
     app.use(express.json());
     app.use('/api/auth', require('../../routes/auth-custom-token-simple'));
 
+    process.env.KYC_CUSTOM_TOKEN_API_KEYS = 'unit-test-key-not-for-deployment-0001';
     const res = await request(app)
       .post('/api/auth/custom-token')
-      .set('Authorization', 'Bearer sharegram-api-key-test-2025')
+      .set('Authorization', `Bearer ${process.env.KYC_CUSTOM_TOKEN_API_KEYS}`)
       .send({ idToken: 'a.b.c' });
 
     expect(res.status).toBe(503);
