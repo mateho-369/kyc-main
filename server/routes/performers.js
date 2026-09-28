@@ -493,7 +493,13 @@ router.post('/', auth, uploadFields, async (req, res) => {
     const ownerId = req.user?.id || null;
     const sharegramOwnerId = req.user?.sharegramUserId || owner?.sharegramUserId;
     if (!ownerId || !sharegramOwnerId) {
-      return res.status(409).json({ success: false, message: 'Unable to resolve performer owner; performer was not created.' });
+      return res.status(409).json({
+        success: false,
+        code: !ownerId ? 'PERFORMER_USER_REQUIRED' : 'SHAREGRAM_ACCOUNT_ID_REQUIRED',
+        message: !ownerId
+          ? 'Unable to resolve the authenticated KYC user; performer was not created.'
+          : 'Sharegram account ID is missing from the verified Firebase identity. Have Sharegram include the signed sharegramUserId claim; performer was not created.'
+      });
     }
 
     // 出演者データの作成

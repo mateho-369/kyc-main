@@ -129,6 +129,14 @@ const getOrCreateUserFromFirebase = async (decodedToken) => {
   let name = decodedToken.name || decodedToken.displayName || null;
   let picture = decodedToken.picture || decodedToken.photoURL || null;
   const providerId = decodedToken.firebase?.sign_in_provider || 'custom';
+  // This must be a claim in the Firebase-signed ID token. Never accept an owner ID
+  // from an unverified request body or infer one from the Firebase UID.
+  const sharegramUserIdValue = decodedToken.sharegramUserId
+    ?? decodedToken.sharegram_user_id
+    ?? decodedToken.account_id;
+  const sharegramUserId = sharegramUserIdValue == null || String(sharegramUserIdValue).trim() === ''
+    ? null
+    : String(sharegramUserIdValue).trim();
 
   // Custom-auth ID tokens do not necessarily include profile claims. Resolve them
   // from the Firebase account record when possible; never invent an email address.
@@ -149,12 +157,28 @@ const getOrCreateUserFromFirebase = async (decodedToken) => {
     user = await User.findOne({ where: { email } });
   }
 
+  if (sharegramUserId) {
+    const ownerOfSharegramId = await User.findOne({ where: { sharegramUserId } });
+    if (ownerOfSharegramId && (!user || Number(ownerOfSharegramId.id) !== Number(user.id))) {
+      const error = new Error('Sharegram account ID is already linked to a different KYC user.');
+      error.code = 'FIREBASE_SHAREGRAM_UID_CONFLICT';
+      throw error;
+    }
+    if (user?.sharegramUserId && String(user.sharegramUserId) !== sharegramUserId) {
+      const error = new Error('Firebase token Sharegram account ID does not match the existing KYC owner.');
+      error.code = 'FIREBASE_SHAREGRAM_UID_CONFLICT';
+      throw error;
+    }
+  }
+
   if (user) {
-    await user.update({
+    const userUpdates = {
       firebaseUid: uid,
       lastLoginAt: new Date(),
       emailVerified: user.emailVerified || emailVerified
-    });
+    };
+    if (sharegramUserId) userUpdates.sharegramUserId = sharegramUserId;
+    await user.update(userUpdates);
     console.log('✅ Firebaseユーザーを既存アカウントに紐付け:', user.id, user.email);
   } else {
     if (!email) {
@@ -171,6 +195,7 @@ const getOrCreateUserFromFirebase = async (decodedToken) => {
       authProvider: 'firebase',
       // 次回のSSOで UID から直接引けるようにする（重複アカウント防止）
       firebaseUid: uid,
+      sharegramUserId,
       lastLoginAt: new Date(),
       // users.password は NOT NULL かつ beforeCreate で bcrypt.hash() される。
       // 値が無いとユーザー作成そのものが失敗するため、推測不能な値を入れる。
@@ -352,6 +377,7 @@ const authenticateFirebase = (options = { required: true }) => {
         name: user.name,
         role: user.role,
         firebaseUid: decodedToken.uid,
+        sharegramUserId: user.sharegramUserId || null,
         isFirebaseAuth: true
       };
 
@@ -365,6 +391,13 @@ const authenticateFirebase = (options = { required: true }) => {
           success: false,
           error: error.message,
           code: 'FIREBASE_EMAIL_REQUIRED'
+        });
+      }
+      if (error.code === 'FIREBASE_SHAREGRAM_UID_CONFLICT') {
+        return res.status(409).json({
+          success: false,
+          error: error.message,
+          code: 'FIREBASE_SHAREGRAM_UID_CONFLICT'
         });
       }
       return res.status(500).json({
