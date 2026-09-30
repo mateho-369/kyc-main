@@ -13,65 +13,8 @@ const { Op } = require('sequelize');
 const rateLimit = require('express-rate-limit');
 
 // ShareGram SSO認証エンドポイント - 緊急修正版
-router.post('/', async (req, res) => {
-  try {
-    console.log('🚨 ShareGram SSO認証開始:', req.body);
-    
-    const { token, action, performer_id, come_back_url } = req.body;
-
-    // 必須フィールドの検証
-    if (!token) {
-      return res.status(400).json({
-        success: false,
-        error: 'token is required'
-      });
-    }
-    
-    // ShareGramトークンの簡易検証（仮実装）
-    if (token.length < 10) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid token'
-      });
-    }
-    
-    // 仮のユーザー情報生成（緊急対応）
-    const userId = 'sharegram-user-' + Date.now();
-    
-    console.log('✅ ShareGram SSO認証成功');
-    
-    // 成功レスポンス
-    res.json({
-      success: true,
-      customToken: 'kyc-custom-token-' + Date.now(), // 仮のカスタムトークン
-      user: {
-        id: userId,
-        email: 'sharegram-user@example.com',
-        displayName: 'ShareGram User'
-      },
-      sessionInfo: {
-        loginMethod: 'sharegram_sso',
-        action: action,
-        performer_id: performer_id,
-        come_back_url: come_back_url
-      }
-    });
-
-  } catch (error) {
-    logger.error('SSO authentication error:', error);
-    
-    // 監査ログ記録
-    await auditLog('sso_error', null, req.ip, {
-      error: error.message,
-      stack: error.stack?.substring(0, 500)
-    });
-
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
-  }
-});
+// Retired fabricated-identity endpoint. Use verified /api/auth/firebase-session.
+router.post('/', (req, res) => res.status(410).json({ code: 'LEGACY_SSO_DISABLED' }));
 
 // SSO状態確認エンドポイント
 router.get('/status', authenticateUser, async (req, res) => {

@@ -472,7 +472,7 @@ const AddPerformerPage = () => {
                 />
               )}
               <div className="flex-1">
-                <p className="text-xs text-gold-600">
+                <p className="text-xs text-gold-700 break-all">
                   {formData[fieldName].name}
                 </p>
               </div>

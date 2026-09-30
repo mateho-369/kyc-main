@@ -5,7 +5,7 @@ import { getDashboardStats } from '../services/dashboardService';
 import { getUserRole } from '../services/auth';
 import { trackError } from '../services/firebaseAnalytics';
 
-const DashboardPage = () => {
+const DashboardPage = ({ showAdministration = true, allowCreate = true, systemStatus } = {}) => {
   const [stats, setStats] = useState({
     totalPerformers: 0,
     pendingVerification: 0,
@@ -86,10 +86,10 @@ const DashboardPage = () => {
               <RefreshCw className="w-4 h-4 mr-2" />
               更新
             </button>
-            <Link to="/performers/add" className="btn-gold">
+            {allowCreate && <Link to="/performers/add" className="btn-gold">
               <Plus className="w-4 h-4 mr-2" />
               新規登録
-            </Link>
+            </Link>}
           </div>
         </div>
       </div>
@@ -112,7 +112,7 @@ const DashboardPage = () => {
               <p className="text-sm font-medium text-navy-500">登録出演者数</p>
               <p className="mt-2 text-3xl font-bold text-navy-900 font-display">{stats.totalPerformers}</p>
               <p className="mt-1 text-xs text-navy-400">
-                <span className="text-success-600 font-medium">アクティブ</span>
+                <span className="text-navy-600 font-medium">登録レコード</span>
               </p>
             </div>
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-gold-100 to-gold-200 flex items-center justify-center">
@@ -180,8 +180,8 @@ const DashboardPage = () => {
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm font-medium text-navy-500">セキュリティ</p>
-                <p className="mt-2 text-lg font-bold text-success-600 font-display">正常稼働中</p>
-                <p className="mt-1 text-xs text-navy-400">すべてのシステムが正常</p>
+                <p className="mt-2 text-lg font-bold text-navy-600 font-display">未確認</p>
+                <p className="mt-1 text-xs text-navy-400">監視データは未接続</p>
               </div>
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-navy-100 to-navy-200 flex items-center justify-center">
                 <Shield className="w-6 h-6 text-navy-600" />
@@ -189,8 +189,8 @@ const DashboardPage = () => {
             </div>
             <div className="mt-4 pt-4 border-t border-navy-100">
               <div className="flex items-center space-x-2">
-                <span className="w-2 h-2 bg-success-500 rounded-full animate-pulse"></span>
-                <span className="text-sm text-navy-500">SSL暗号化済み</span>
+                <span className="w-2 h-2 bg-navy-300 rounded-full animate-pulse"></span>
+                <span className="text-sm text-navy-500">稼働状況は別途確認</span>
               </div>
             </div>
           </div>
@@ -206,7 +206,7 @@ const DashboardPage = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Link
+            {allowCreate && <Link
               to="/performers/add"
               className="group p-4 rounded-xl border border-navy-100 hover:border-gold-200 hover:bg-gold-50/50 transition-all duration-200"
             >
@@ -219,7 +219,7 @@ const DashboardPage = () => {
                   <p className="text-sm text-navy-500">本人確認情報を登録</p>
                 </div>
               </div>
-            </Link>
+            </Link>}
 
             <Link
               to="/performers"
@@ -236,7 +236,7 @@ const DashboardPage = () => {
               </div>
             </Link>
 
-            {isAdmin && (
+            {isAdmin && showAdministration && (
               <Link
                 to="/audit-logs"
                 className="group p-4 rounded-xl border border-navy-100 hover:border-navy-200 hover:bg-navy-50/50 transition-all duration-200"
@@ -256,33 +256,33 @@ const DashboardPage = () => {
         </div>
 
         {/* System Status Card - Admin Only */}
-        {isAdmin && (
+        {isAdmin && showAdministration && (
           <div className="card-premium p-6 animate-fade-in-up stagger-5">
             <h2 className="text-lg font-semibold text-navy-900 font-display mb-4">システム状態</h2>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between py-3 border-b border-navy-100">
                 <div className="flex items-center space-x-3">
-                  <div className="w-2 h-2 bg-success-500 rounded-full"></div>
+                  <div className="w-2 h-2 bg-navy-300 rounded-full"></div>
                   <span className="text-sm text-navy-700">APIサーバー</span>
                 </div>
-                <span className="text-xs font-medium text-success-600 bg-success-50 px-2 py-1 rounded-full">稼働中</span>
+                <span className="text-xs font-medium text-navy-600 bg-navy-50 px-2 py-1 rounded-full">{systemStatus?.api || '未確認'}</span>
               </div>
 
               <div className="flex items-center justify-between py-3 border-b border-navy-100">
                 <div className="flex items-center space-x-3">
-                  <div className="w-2 h-2 bg-success-500 rounded-full"></div>
+                  <div className="w-2 h-2 bg-navy-300 rounded-full"></div>
                   <span className="text-sm text-navy-700">データベース</span>
                 </div>
-                <span className="text-xs font-medium text-success-600 bg-success-50 px-2 py-1 rounded-full">正常</span>
+                <span className="text-xs font-medium text-navy-600 bg-navy-50 px-2 py-1 rounded-full">{systemStatus?.database || '未確認'}</span>
               </div>
 
               <div className="flex items-center justify-between py-3">
                 <div className="flex items-center space-x-3">
-                  <div className="w-2 h-2 bg-success-500 rounded-full"></div>
+                  <div className="w-2 h-2 bg-navy-300 rounded-full"></div>
                   <span className="text-sm text-navy-700">ストレージ</span>
                 </div>
-                <span className="text-xs font-medium text-success-600 bg-success-50 px-2 py-1 rounded-full">正常</span>
+                <span className="text-xs font-medium text-navy-600 bg-navy-50 px-2 py-1 rounded-full">{systemStatus?.storage || '未確認'}</span>
               </div>
             </div>
           </div>

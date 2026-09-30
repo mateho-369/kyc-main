@@ -68,6 +68,7 @@ const User = sequelize.define('User', {
   // Firebase認証統合フィールド（CEOミッション第2段階）
   sharegramUserId: {
     type: DataTypes.STRING,
+    unique: 'users_sharegram_identity_unique',
     allowNull: true
   },
   lastLoginAt: {

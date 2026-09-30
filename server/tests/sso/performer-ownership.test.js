@@ -14,7 +14,7 @@ const mockSelectRows = where => mockRows.filter(row => {
   return true;
 });
 jest.mock('../../models', () => ({
-  Performer: { findAndCountAll: jest.fn(async ({ where }) => { const result = mockSelectRows(where); return { count: result.length, rows: result }; }), count: jest.fn(async ({where}) => mockSelectRows(where).length), findAll: jest.fn(async ({where}) => mockRows.filter(r => Object.entries(where).every(([k,v]) => r[k] == v))), findByPk: jest.fn(async id => mockRows.find(r => r.id === Number(id))), create: jest.fn(), update: jest.fn() },
+  Performer: { sequelize: { transaction: fn => fn({ LOCK: { UPDATE: 'UPDATE' } }) }, findAndCountAll: jest.fn(async ({ where }) => { const result = mockSelectRows(where); return { count: result.length, rows: result }; }), count: jest.fn(async ({where}) => mockSelectRows(where).length), findAll: jest.fn(async ({where}) => mockRows.filter(r => Object.entries(where).every(([k,v]) => r[k] == v))), findByPk: jest.fn(async id => mockRows.find(r => r.id === Number(id))), create: jest.fn(), update: jest.fn() },
   User: { findOne: jest.fn(async ({where}) => where.firebaseUid === 'uid-a' ? {id:11} : where.firebaseUid === 'uid-b' ? {id:22} : null), findByPk: jest.fn(async id => ({id, sharegramUserId:'sg-a'})) },
   AuditLog: { create: jest.fn(async () => ({})) }
 }));
@@ -90,16 +90,16 @@ describe('performer owner scoping', () => {
       .field('firstName', 'Creator')
       .field('lastNameRoman', 'KYC')
       .field('firstNameRoman', 'Creator')
-      .attach('agreementFile', Buffer.from('agreement'), { filename: 'agreement.pdf', contentType: 'application/pdf' })
-      .attach('idFront', Buffer.from('identity'), { filename: 'identity.jpg', contentType: 'image/jpeg' })
-      .attach('selfie', Buffer.from('selfie'), { filename: 'selfie.jpg', contentType: 'image/jpeg' });
+      .attach('agreementFile', Buffer.from('%PDF-1.4'), { filename: 'agreement.pdf', contentType: 'application/pdf' })
+      .attach('idFront', Buffer.from([255,216,255]), { filename: 'identity.jpg', contentType: 'image/jpeg' })
+      .attach('selfie', Buffer.from([255,216,255]), { filename: 'selfie.jpg', contentType: 'image/jpeg' });
 
     expect(response.status).toBe(200);
     expect(models.Performer.create).toHaveBeenCalledWith(expect.objectContaining({
       userId: 11,
       sharegramUserId: null
     }));
-    const documents = response.body.data.documents;
+    const documents = models.Performer.create.mock.calls.at(-1)[0].documents;
     for (const document of Object.values(documents)) {
       if (document?.path && fs.existsSync(document.path)) fs.unlinkSync(document.path);
     }

@@ -13,6 +13,8 @@ const KYCVerificationStep = require('./KYCVerificationStep');
 
 // Define all models
 const models = {
+  PerformerDecision: require('./PerformerDecision'),
+  DecisionOutbox: require('./DecisionOutbox'),
   User,
   Performer,
   AuditLog,

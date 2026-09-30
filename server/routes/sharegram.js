@@ -2,6 +2,8 @@ const express = require('express');
 const wrapRouter = require("../utils/wrapRouter");
 // Express 4 は async ハンドラの reject を捕捉しないため、ルーター単位で自動ラップする
 const router = wrapRouter(express.Router());
+// Retire the in-memory fake-token exchange; use verified Firebase sessions.
+router.use('/sso', (req, res) => res.status(410).json({ code: 'LEGACY_SHAREGRAM_PREPARE_DISABLED' }));
 const { check, validationResult } = require('express-validator');
 const axios = require('axios');
 const crypto = require('crypto');

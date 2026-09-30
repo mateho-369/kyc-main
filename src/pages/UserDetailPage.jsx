@@ -37,7 +37,7 @@ const UserDetailPage = () => {
 
   const getRoleBadge = (role) => {
     if (role === 'admin') {
-      return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">管理者</span>;
+      return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gold-100 text-gold-800">管理者</span>;
     }
     return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">一般</span>;
   };
@@ -107,13 +107,13 @@ const UserDetailPage = () => {
   if (error) {
     return (
       <div className="max-w-lg mx-auto py-12">
-        <div className="card-premium p-8 text-center">
+        <div className="card-premium p-5 sm:p-8 text-center">
           <div className="w-16 h-16 rounded-full bg-danger-50 flex items-center justify-center mx-auto mb-4">
             <AlertCircle className="w-8 h-8 text-danger-500" />
           </div>
           <h3 className="text-lg font-semibold text-navy-900 mb-2">エラーが発生しました</h3>
           <p className="text-navy-500 mb-6">{error}</p>
-          <div className="flex items-center justify-center space-x-4">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={() => {
                 setError('');
@@ -159,8 +159,8 @@ const UserDetailPage = () => {
             <User className="w-8 h-8 text-navy-500" />
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-navy-900 font-display">{userData.name}</h1>
-            <div className="flex items-center space-x-3 mt-2">
+            <h1 className="text-2xl font-bold text-navy-900 font-display break-words">{userData.name}</h1>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
               {getRoleBadge(userData.role)}
               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${userData.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                 {userData.isActive ? 'アクティブ' : '非アクティブ'}
@@ -175,7 +175,7 @@ const UserDetailPage = () => {
             <Mail className="w-5 h-5 text-navy-400" />
             <div>
               <p className="text-xs text-navy-500">メールアドレス</p>
-              <p className="text-sm text-navy-900">{userData.email}</p>
+              <p className="text-sm text-navy-900 break-all">{userData.email}</p>
             </div>
           </div>
           <div className="flex items-center space-x-3">

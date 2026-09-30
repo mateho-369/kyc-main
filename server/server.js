@@ -8,6 +8,7 @@ const WebSocket = require('ws');
 const envFile = process.env.NODE_ENV === 'production' ? '.env.production' : '.env';
 const envPath = path.join(__dirname, envFile);
 require('dotenv').config({ path: envPath });
+require('./scripts/check-local-config').assertProduction();
 
 // Sharegram SSO 用の設定チェック。
 // .env が読めていないだけ（リポジトリ直下に置いてしまった等）で
@@ -74,7 +75,7 @@ app.use(csrfConfigProvider);
 
 // リクエストログ用ミドルウェア（デバッグ用）
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
 });
 
@@ -105,9 +106,11 @@ if (!fs.existsSync(performersUploadsDir)) {
 // e.g. GET /api/performers/:id/documents/:type
 
 // APIルートを設定する前にCORSのpreflight requestを処理
-app.options('*', cors());
+app.options('*', secureCORS());
 
 // CSRF token endpoints
+// Baseline limit applies before all API/auth mounts, including legacy endpoints.
+app.use(['/api', '/auth'], require('express-rate-limit')({ windowMs: 15 * 60 * 1000, max: 600, standardHeaders: true, legacyHeaders: false }));
 app.use('/api', require('./routes/csrf'));
 
 // Sharegram Simple API disabled: contained hardcoded test API keys (security risk)
@@ -156,6 +159,8 @@ const auth = require('./middleware/auth');
 const checkRole = require('./middleware/checkRole');
 app.use('/api/audit-logs', auth, checkRole(['admin']), require('./routes/auditLogs'));
 app.use('/api/admin/users', require('./routes/admin-users'));
+app.use('/api/admin/decision-outbox', require('./routes/decision-outbox'));
+app.use('/api/admin/invitations', require('./routes/admin-invitations'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/documents', require('./routes/api/documents'));
 app.use('/api/sharegram', require('./routes/sharegram'));
@@ -163,7 +168,7 @@ app.use('/api/sharegram', require('./routes/sharegram'));
 // 【修正】Sharegram専用Performersエンドポイント（Bearer認証対応）
 app.use('/api/sharegram/performers', require('./routes/sharegram-performers'));
 // app.use('/api/users', require('./routes/users'));
-app.use('/test', require('./routes/test-file'));
+// File-writing diagnostics are deliberately not mounted in the application.
 
 // 緊急修正: 未マウントルートの追加（APIインフラ修正）
 // app.use('/api/webhooks', require('./routes/webhooks')); // Temporarily disabled - missing controller
@@ -244,7 +249,7 @@ app.get('*', (req, res, next) => {
   // React SPAのindex.htmlを返す
   const indexPath = path.join(__dirname, '..', 'build', 'index.html');
   if (fs.existsSync(indexPath)) {
-    console.log(`SPA fallback: ${req.originalUrl} -> index.html`);
+    console.log(`SPA fallback: ${req.path} -> index.html`);
     res.sendFile(indexPath);
   } else {
     next();
@@ -350,7 +355,7 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
-      console.log('Received WebSocket message:', data);
+      // Never log arbitrary client payloads (they can contain tokens/PII).
       
       // エコーレスポンス
       ws.send(JSON.stringify({
@@ -402,7 +407,7 @@ if (process.env.WS_HEARTBEAT_INTERVAL) {
 }
 
 // サーバー起動
-server.listen(PORT, () => {
+server.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`WebSocket server running on ${process.env.WS_PATH || '/ws'}`);
   console.log(`CORS is enabled for all origins`);

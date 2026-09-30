@@ -33,12 +33,7 @@ module.exports = async function(req, res, next) {
     const authHeader = req.header('Authorization');
     const apiClient = req.header('X-API-Client');
     
-    // デバッグログ: Sharegramからのリクエストヘッダーを確認
-    console.log('hybrid-auth headers:', {
-      Authorization: authHeader ? (authHeader.substring(0, 30) + '...') : 'none',
-      'X-API-Client': apiClient || 'none',
-      'X-Sharegram-API-Key': req.header('X-Sharegram-API-Key') || 'none'
-    });
+    // Never log Authorization or API-key headers (including token prefixes).
 
     // Sharegram API認証の判定
     // 1. テスト用APIキー（sharegram-api-key-test-2025）→ 簡易認証で通す

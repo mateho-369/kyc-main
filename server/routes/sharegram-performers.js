@@ -4,6 +4,7 @@ const wrapRouter = require("../utils/wrapRouter");
 const router = wrapRouter(express.Router());
 const { Performer, AuditLog, User } = require('../models');
 const { Op } = require('sequelize');
+const externalOwnerScope = require('../services/externalOwnerScope');
 const { sharegramAuth } = require('../middleware/sharegram-auth');
 
 /**
@@ -42,22 +43,8 @@ router.get('/', sharegramAuth, async (req, res) => {
     }
 
     // 検索条件の構築
-    const whereClause = {};
-    if (firebase_uid) {
-      const owner = await User.findOne({
-        where: { firebaseUid: firebase_uid },
-        attributes: ['id']
-      });
-      // User primary keys are positive auto-increment integers; use an impossible
-      // owner value so the normal empty-list response shape is preserved.
-      whereClause.userId = owner ? owner.id : -1;
-    } else if (user_id) {
-      let owner = await User.findOne({ where: { firebaseUid: user_id }, attributes: ['id'] });
-      if (!owner) owner = await User.findOne({ where: { sharegramUserId: user_id }, attributes: ['id'] });
-      if (owner) whereClause.userId = owner.id;
-      else whereClause.sharegramUserId = user_id;
-    }
-    
+    const whereClause = await externalOwnerScope(req.query);
+
     // ステータスフィルタリング
     if (status) {
       whereClause.status = status;
@@ -142,7 +129,7 @@ router.get('/', sharegramAuth, async (req, res) => {
       resourceType: 'performer',
       resourceId: 0,
       details: { 
-        query: req.query,
+        filterKeys: Object.keys(req.query).filter(key => ['status','sort','page','limit','search','firebase_uid','user_id','external_ids'].includes(key)),
         resultCount: performers.length,
         apiClient: req.sharegramAuth?.apiClient,
         testMode: req.sharegramAuth?.testMode || false
@@ -166,7 +153,8 @@ router.get('/', sharegramAuth, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Sharegram performers API error:', error);
+    if (error.status === 400) return res.status(400).json({ code: 'OWNER_SCOPE_REQUIRED' });
+    console.error('Sharegram performers API failed');
     
     // エラー監査ログ
     try {
@@ -177,7 +165,7 @@ router.get('/', sharegramAuth, async (req, res) => {
         resourceId: 0,
         details: { 
           error: error.message,
-          query: req.query,
+          filterKeys: Object.keys(req.query).filter(key => ['status','sort','page','limit','search','firebase_uid','user_id','external_ids'].includes(key)),
           apiClient: req.sharegramAuth?.apiClient
         },
         ipAddress: req.ip,
@@ -205,6 +193,7 @@ router.get('/:identifier', sharegramAuth, async (req, res) => {
   try {
     const { identifier } = req.params;
     
+    const ownerScope = await externalOwnerScope(req.query);
     // IDまたはexternal_idで検索
     const whereClause = isNaN(identifier) 
       ? { external_id: identifier }
@@ -216,7 +205,7 @@ router.get('/:identifier', sharegramAuth, async (req, res) => {
         };
     
     const performer = await Performer.findOne({
-      where: whereClause,
+      where: { [Op.and]: [whereClause, ownerScope] },
       attributes: [
         'id',
         'external_id',
@@ -230,7 +219,6 @@ router.get('/:identifier', sharegramAuth, async (req, res) => {
         'kycVerifiedAt',
         'kycExpiresAt',
         'riskScore',
-        'kycMetadata',
         'documents',
         'createdAt',
         'updatedAt',
@@ -289,7 +277,8 @@ router.get('/:identifier', sharegramAuth, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Sharegram performer detail API error:', error);
+    if (error.status === 400) return res.status(400).json({ code: 'OWNER_SCOPE_REQUIRED' });
+    console.error('Sharegram performer detail API failed');
     
     res.status(500).json({
       error: '認証処理中にエラーが発生しました',

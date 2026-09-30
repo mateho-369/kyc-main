@@ -129,15 +129,13 @@ export const updatePerformer = async (id, performerData) => {
 export const getPerformerDocuments = async (performerId) => {
   try {
     const response = await secureApiClient.get(`/performers/${performerId}/documents`);
-    // レスポンスデータの形式を確認
-    if (response.data && response.data.data) {
-      return Array.isArray(response.data.data) ? response.data.data : [];
-    }
-    return Array.isArray(response.data) ? response.data : [];
+    const data = response.data?.data ?? response.data;
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.documents)) return data.documents;
+    throw new Error('Invalid document response. No document data was loaded.');
   } catch (error) {
-    console.error('書類取得エラー:', error);
-    // エラーの場合は空配列を返す
-    return [];
+    // An unavailable service is not an empty application.
+    throw error;
   }
 };
 

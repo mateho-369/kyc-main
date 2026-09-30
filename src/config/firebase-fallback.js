@@ -1,7 +1,7 @@
 // Fail-closed fallback used only when the real Firebase Web App config is missing
 // or invalid. It must never fabricate an authenticated user.
 const firebaseUnavailable = () => Promise.reject(new Error('Firebase is not configured. Add the shared Firebase project Web App values to the local environment.'));
-const mockAuth = {
+const unavailableAuth = {
   currentUser: null,
   signOut: async () => Promise.resolve(),
   signInWithEmailAndPassword: firebaseUnavailable,
@@ -13,15 +13,15 @@ const mockAuth = {
   useDeviceLanguage: () => {}
 };
 
-const mockDb = {
+const unavailableDb = {
   collection: () => ({
     doc: () => ({
-      get: async () => ({ exists: false, data: () => ({}) }),
-      set: async () => {},
-      update: async () => {},
-      delete: async () => {}
+      get: firebaseUnavailable,
+      set: firebaseUnavailable,
+      update: firebaseUnavailable,
+      delete: firebaseUnavailable
     })
   })
 };
 
-export { mockAuth as auth, mockDb as db };
+export { unavailableAuth as auth, unavailableDb as db };

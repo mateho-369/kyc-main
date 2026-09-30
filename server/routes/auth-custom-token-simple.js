@@ -55,16 +55,16 @@ const authenticateSharegramAPIKey = (req, res, next) => {
   }
 
   const apiKey = authHeader.replace('Bearer ', '');
-  const validKeys = ['sharegram-api-key-test-2025', 'sharegram-kyc-system-key-2025'];
+  const validKeys = String(process.env.KYC_CUSTOM_TOKEN_API_KEYS || '').split(',').map(k => k.trim()).filter(k => Buffer.byteLength(k) >= 32);
   
-  if (!validKeys.includes(apiKey)) {
+  if (!validKeys.some(key => crypto.timingSafeEqual(crypto.createHash('sha256').update(key).digest(), crypto.createHash('sha256').update(apiKey).digest()))) {
     return res.status(401).json({
       success: false,
       error: { code: 'INVALID_API_KEY', message: 'Invalid API key' }
     });
   }
 
-  req.sharegramAPIKey = apiKey;
+  req.sharegramAPIKey = '[redacted]';
   req.isTestEnvironment = apiKey.includes('test');
   next();
 };
@@ -107,7 +107,7 @@ router.post('/custom-token', authenticateSharegramAPIKey, async (req, res) => {
     }
 
     logger.info('Sharegram IDToken→CustomToken conversion started', {
-      apiKey: req.sharegramAPIKey,
+      apiKey: '[redacted]',
       performerId,
       hasRedirectTarget: !!redirect_target,
       ip: req.ip
@@ -177,12 +177,10 @@ router.post('/custom-token', authenticateSharegramAPIKey, async (req, res) => {
     const kycCustomClaims = {
       // 基本識別
       kycSiteUser: true,
-      sharegramUser: true,
       
       // ShareGram情報
       sharegramUid: decodedIdToken.uid,
       sharegramEmail: decodedIdToken.email,
-      sharegramPerformerId: performerId,
       
       // セッション情報  
       loginMethod: 'sharegram_sso',
@@ -190,18 +188,16 @@ router.post('/custom-token', authenticateSharegramAPIKey, async (req, res) => {
       sessionId: crypto.randomUUID(),
       
       // API情報
-      apiKeyUsed: req.sharegramAPIKey,
       isTestEnvironment: req.isTestEnvironment,
       
       // リダイレクト情報
-      redirectTarget: redirect_target,
       
       // メタデータ
       integrationVersion: '2.0',
       processingTime: Date.now() - startTime,
       
       // 追加メタデータ
-      ...metadata
+      // Client metadata must never become Firebase privilege or owner claims.
     };
 
     // 【STEP 5】KYCカスタムトークン発行 (KYC→フロント)
@@ -275,7 +271,7 @@ router.post('/custom-token', authenticateSharegramAPIKey, async (req, res) => {
       error: error.message,
       stack: error.stack,
       processingTime,
-      apiKey: req.sharegramAPIKey
+      apiKey: '[redacted]'
     });
 
     res.status(500).json({
@@ -325,36 +321,6 @@ router.get('/custom-token/status', authenticateSharegramAPIKey, async (req, res)
  * トークン形式テスト
  * POST /api/auth/custom-token/test
  */
-router.post('/custom-token/test', authenticateSharegramAPIKey, async (req, res) => {
-  try {
-    const testIdToken = 'eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.eyJ1aWQiOiJ0ZXN0X3VpZCIsImVtYWlsIjoidGVzdEBleGFtcGxlLmNvbSIsImF1ZCI6InRlc3QiLCJpc3MiOiJ0ZXN0IiwiZXhwIjo5OTk5OTk5OTk5LCJpYXQiOjE2MzA0NTcyMDB9.test_signature';
-    
-    const testCustomToken = await createCustomToken('test_uid', {
-      testMode: true,
-      timestamp: Date.now()
-    });
-    
-    res.json({
-      success: true,
-      data: {
-        tokenConversion: {
-          inputExample: 'Firebase ID Token (JWT from ShareGram)',
-          outputExample: 'Firebase Custom Token (for KYC authentication)',
-          testCustomToken: testCustomToken.substring(0, 50) + '...'
-        },
-        process: {
-          step1: 'verifyIdToken(sharegramIdToken)',
-          step2: 'createCustomToken(uid, kycClaims)',
-          step3: 'return customToken to frontend'
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: { code: 'TEST_FAILED', message: error.message }
-    });
-  }
-});
+router.post('/custom-token/test', (req, res) => res.status(410).json({ code: 'TEST_TOKEN_ENDPOINT_DISABLED' }));
 
 module.exports = router;

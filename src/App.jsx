@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { useAuth } from './contexts/AuthContext';
@@ -14,9 +14,7 @@ import AdminUsersPage from './pages/AdminUsersPage';
 import UserDetailPage from './pages/UserDetailPage';
 import SSOPage from './pages/SSOPage';
 import KYCSharegramGateway from './components/sharegram/SharegramGateway';
-import DebugTools from './components/DebugTools';
 import OfflineNotification from './components/OfflineNotification';
-import FirebaseAutoAuth from './components/auth/FirebaseAutoAuth';
 // 共通（認証不要）ページ。LoginPage から /terms・/privacy へリンクがあるため
 // ルートが必須（以前はリンク先が / へリダイレクトしていた）。
 import TermsPage from './pages/TermsPage';
@@ -26,7 +24,7 @@ import ContactPage from './pages/ContactPage';
 import CancellationPage from './pages/CancellationPage';
 
 // Protected Route コンポーネント（リダイレクトループ対策）
-const ProtectedRoute = ({ children }) => {
+const ProtectedRoute = ({ children, adminOnly = false }) => {
   const { user, isAuthenticated, loading } = useAuth();
   
   if (loading) {
@@ -49,6 +47,7 @@ const ProtectedRoute = ({ children }) => {
     return <Navigate to={redirectUrl} replace />;
   }
   
+  if (adminOnly && user?.role !== 'admin') return <Navigate to="/" replace />;
   return children;
 };
 
@@ -56,14 +55,16 @@ const ProtectedRoute = ({ children }) => {
 // ヘッダーのメニューボタンとナビは兄弟なので、開閉状態はここで持つ。
 const MainLayout = ({ children }) => {
   const [navOpen, setNavOpen] = useState(false);
+  const closeNav = useCallback(() => setNavOpen(false), []);
 
   return (
     <div className="flex flex-col min-h-screen">
-      <Header onToggleNav={() => setNavOpen((open) => !open)} />
+      <a href="#main-content" className="skip-link">メインコンテンツへ</a>
+      <Header navOpen={navOpen} onToggleNav={() => setNavOpen((open) => !open)} />
       <div className="flex flex-1">
-        <Navigation mobileOpen={navOpen} onClose={() => setNavOpen(false)} />
-        <main className="flex-1 bg-gray-100">
-          <div className="container mx-auto px-4 py-8">
+        <Navigation mobileOpen={navOpen} onClose={closeNav} />
+        <main id="main-content" className="min-w-0 flex-1 bg-navy-50/50">
+          <div className="w-full max-w-screen-2xl mx-auto px-4 py-6 sm:px-6 lg:p-8">
             {children}
           </div>
         </main>
@@ -130,7 +131,7 @@ function App() {
           
 
           <Route path="/admin/users" element={
-            <ProtectedRoute>
+            <ProtectedRoute adminOnly>
               <MainLayout>
                 <AdminUsersPage />
               </MainLayout>
@@ -138,7 +139,7 @@ function App() {
           } />
 
           <Route path="/admin/users/:id" element={
-            <ProtectedRoute>
+            <ProtectedRoute adminOnly>
               <MainLayout>
                 <UserDetailPage />
               </MainLayout>
@@ -146,7 +147,7 @@ function App() {
           } />
 
           <Route path="/audit-logs" element={
-            <ProtectedRoute>
+            <ProtectedRoute adminOnly>
               <MainLayout>
                 <AuditLogsPage />
               </MainLayout>
@@ -157,8 +158,6 @@ function App() {
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         
-        {/* Debug Tools - 開発環境でのみ表示 */}
-        <DebugTools />
         
         {/* オフライン通知 */}
         <OfflineNotification />

@@ -3,4 +3,18 @@ npm-debug.log
 build
 .git
 .gitignore
-.env
+.env# Do not bake local/production secrets, sessions or temporary artifacts into images.
+**/.env*
+!**/.env.example
+!**/.env.*.example
+**/*.pem
+**/*.key
+**/*serviceAccount*.json
+**/*service-account*.json
+**/firebase-adminsdk*.json
+**/cookies.txt
+**/.cache
+**/coverage
+**/logs
+
+**/node_modules

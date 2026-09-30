@@ -1,3 +1,5 @@
+import ReviewDecisionPanel from '../components/review/ReviewDecisionPanel';
+import ReviewStatusNotice, { reviewState } from '../components/review/ReviewStatus';
 import React, { useState, useEffect } from 'react';
 // import { getPerformerById, getPerformerDocuments, downloadDocument, deletePerformer, verifyDocument } from '../services/api';
 import { FiAlertCircle as AlertCircle, FiCheckCircle as CheckCircle, FiDownload as Download, FiEye as Eye, FiFileText as FileText, FiInfo as Info, FiTrash as Trash } from 'react-icons/fi';
@@ -9,7 +11,7 @@ import { getPerformerDocumentsMetadata } from '../services/documentMetadataServi
 import DocumentThumbnail from '../components/DocumentThumbnail';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 
-const PerformerDetailPage = () => {
+const PerformerDetailPage = ({ simulation = false, allowRecordChanges = true } = {}) => {
  const { id } = useParams();
  const navigate = useNavigate();
  const [performer, setPerformer] = useState(null);
@@ -76,6 +78,7 @@ const PerformerDetailPage = () => {
        setPerformer(performerData);
 
        // documentsオブジェクトを配列形式に変換
+       if (typeof performerData.documents === 'string') performerData.documents = JSON.parse(performerData.documents);
        if (performerData.documents) {
          const documentArray = [];
          const documentTypeMapping = {
@@ -91,7 +94,7 @@ const PerformerDetailPage = () => {
              documentArray.push({
                type: documentTypeMapping[key] || key,
                url: value,
-               status: 'pending',
+               status: value.verified ? 'verified' : value.rejectedAt ? 'rejected' : 'pending',
                uploaded_at: performerData.createdAt,
                mimeType: (value.mimeType || (value.path && value.path.endsWith('.png') ? 'image/png' : 'image/jpeg'))
              });
@@ -178,6 +181,8 @@ const PerformerDetailPage = () => {
     // 書類データを再取得して更新
     const updatedDocs = await getPerformerDocuments(id);
     setDocuments(updatedDocs);
+    setPerformer(await getPerformerById(id));
+    setDocumentsMetadata(await getPerformerDocumentsMetadata(id));
   } catch (err) {
     // 403 の理由（「書類の検証は管理者のみが実行できます。」）をそのまま出す。
     // 握り潰すと「ボタンが効かない」にしか見えないため。
@@ -214,12 +219,16 @@ const PerformerDetailPage = () => {
    if (!Array.isArray(documentsMetadata)) {
      console.warn('documentsMetadata is not an array:', documentsMetadata);
    }
+   const aliases = { agreementFile: 'agreement_file', idFront: 'id_front', idBack: 'id_back', selfieWithId: 'selfie_with_id' };
+   const normalize = type => aliases[type] || type;
    return documents.map(doc => {
+     const type = normalize(doc.type);
      const metadata = Array.isArray(documentsMetadata)
-       ? documentsMetadata.find(meta => meta.type === doc.type)
+       ? documentsMetadata.find(meta => normalize(meta.type) === type)
        : null;
      return {
-       ...doc,
+       ...doc, type,
+       status: metadata?.status || doc.status || (doc.verified === true ? 'verified' : 'pending'),
        metadata: metadata || null
      };
    });
@@ -258,9 +267,9 @@ const PerformerDetailPage = () => {
  const documentRequirements = [
   { type: 'agreement_file', label: '同意書', required: true },
   { type: 'id_front', label: '身分証明書（表）', required: true },
-  { type: 'id_back', label: '身分証明書（裏）', required: true },
+  { type: 'id_back', label: '身分証明書（裏）', required: false },
   { type: 'selfie', label: 'セルフィー', required: true },
-  { type: 'selfie_with_id', label: '身分証明書と一緒のセルフィー', required: true }
+  { type: 'selfie_with_id', label: '身分証明書と一緒のセルフィー', required: false }
  ];
 
  const mergedDocuments = mergeDocumentsWithMetadata();
@@ -268,11 +277,11 @@ const PerformerDetailPage = () => {
  // KYC progress calculation
  const totalRequired = documentRequirements.filter(r => r.required).length;
  const submittedCount = documentRequirements.filter(req =>
-   mergedDocuments.some(d => d.type === req.type)
+   req.required && mergedDocuments.some(d => d.type === req.type && d.status !== 'missing')
  ).length;
  const verifiedCount = documentRequirements.filter(req => {
    const doc = mergedDocuments.find(d => d.type === req.type);
-   return doc && doc.status === 'verified';
+   return req.required && doc && doc.status === 'verified';
  }).length;
  const progressPercent = totalRequired > 0 ? Math.round((submittedCount / totalRequired) * 100) : 0;
 
@@ -291,6 +300,7 @@ const PerformerDetailPage = () => {
 
  return (
   <div className="max-w-6xl mx-auto animate-fade-in">
+    <div className="mb-6"><ReviewStatusNotice performer={performer} /></div>
     {/* KYC Progress Summary */}
     <div className="card-premium p-6 mb-6 animate-fade-in-up stagger-1" style={{ animationFillMode: 'both' }}>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -301,7 +311,7 @@ const PerformerDetailPage = () => {
             <span className="text-sm font-normal text-navy-400 ml-2">書類提出済み</span>
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-success-500"></div>
             <span className="text-xs text-navy-500">確認済 {verifiedCount}</span>
@@ -334,10 +344,10 @@ const PerformerDetailPage = () => {
     </div>
 
     {/* Performer Info Card */}
-    <div className="card-premium p-8 mb-6 animate-fade-in-up stagger-2" style={{ animationFillMode: 'both' }}>
-      <div className="flex justify-between items-start mb-8">
+    <div className="card-premium p-4 sm:p-8 mb-6 animate-fade-in-up stagger-2" style={{ animationFillMode: 'both' }}>
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-display font-bold text-navy-900">{performer.lastName} {performer.firstName}</h1>
+          <h1 className="text-2xl font-display font-bold text-navy-900 break-words">{performer.lastName} {performer.firstName}</h1>
           <p className="text-sm text-navy-400 mt-1.5">ID: {performer.id}</p>
           {performer.external_id && (
             <p className="text-sm text-navy-400">External ID: {performer.external_id}</p>
@@ -347,12 +357,15 @@ const PerformerDetailPage = () => {
           <button
             onClick={() => navigate(`/performers/${id}/edit`)}
             className="btn-primary"
+            disabled={!allowRecordChanges || performer.status !== 'pending'}
           >
             編集
           </button>
-          {(userRole === 'admin' || userRole === 'superadmin') && (
+          {(userRole === 'admin') && (
             <button
               onClick={() => setDeleteModalOpen(true)}
+              disabled={!allowRecordChanges || performer.status !== 'pending'}
+              aria-label="削除"
               className="p-3 text-danger-600 hover:bg-danger-50 rounded-xl transition-all duration-200"
               title="削除"
             >
@@ -406,13 +419,13 @@ const PerformerDetailPage = () => {
           return (
             <div
               key={req.type}
-              className={`flex items-center justify-between p-4 sm:p-5 rounded-xl border transition-all duration-200 ${
+              className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-xl border transition-all duration-200 ${
                 doc
                   ? 'border-navy-200 bg-white hover:border-navy-300 hover:shadow-soft'
                   : 'border-dashed border-navy-200 bg-navy-50/30'
               }`}
             >
-              <div className="flex items-center space-x-3 sm:space-x-4">
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                 {/* Thumbnail */}
                 {doc ? (
                   <DocumentThumbnail
@@ -421,7 +434,7 @@ const PerformerDetailPage = () => {
                     mimeType={doc.mimeType}
                     onClick={() => handlePreview(doc)}
                     className="flex-shrink-0"
-                    exists={!!(doc.url && doc.url.path)}
+                    exists={doc.status !== 'missing'}
                   />
                 ) : (
                   <div className="w-16 h-16 sm:w-20 sm:h-20 border border-navy-200 rounded-xl bg-navy-50 flex items-center justify-center flex-shrink-0">
@@ -440,12 +453,12 @@ const PerformerDetailPage = () => {
                   {doc ? (
                     <div className="space-y-1 mt-1">
                       <p className="text-sm text-navy-500">
-                        アップロード日: {new Date(doc.uploaded_at).toLocaleDateString('ja-JP')}
+                        アップロード日: {doc.metadata?.uploadedAt || doc.uploaded_at ? new Date(doc.metadata?.uploadedAt || doc.uploaded_at).toLocaleDateString('ja-JP') : '—'}
                       </p>
                       {/* Metadata display */}
                       {doc.metadata && (
                         <div className="text-xs text-navy-400 space-y-0.5">
-                          <p>サイズ: {(doc.metadata.size / 1024).toFixed(2)} KB</p>
+                          <p>サイズ: {doc.metadata.fileSize != null ? `${(doc.metadata.fileSize / 1024).toFixed(2)} KB` : '—'}</p>
                           <p>形式: {doc.metadata.mimeType}</p>
                           {doc.metadata.dimensions && (
                             <p>サイズ: {doc.metadata.dimensions.width} x {doc.metadata.dimensions.height}</p>
@@ -482,10 +495,10 @@ const PerformerDetailPage = () => {
                     おらず、管理者でもこの画面から書類を確定できなかった。
                     API: PUT /api/performers/:id/documents/:type/verify（管理者限定）。
                   */}
-                  {(userRole === 'admin' || userRole === 'superadmin') && (
+                  {(userRole === 'admin') && (
                     <button
                       onClick={() => handleVerify(doc.type)}
-                      disabled={verifyingDoc === doc.type}
+                      disabled={verifyingDoc === doc.type || performer.status !== 'pending' || reviewState(performer) === 'correction'}
                       title={doc.status === 'verified' ? '検証済み（再検証）' : 'この書類を検証する'}
                       className={`p-2.5 rounded-lg transition-all duration-200 ${
                         doc.status === 'verified'
@@ -503,6 +516,12 @@ const PerformerDetailPage = () => {
         })}
       </div>
     </div>
+
+    {userRole === 'admin' && <div className="mb-6"><ReviewDecisionPanel simulation={simulation} performer={performer} onDecision={async (action, body) => {
+      const response = await secureApiClient.post(`/performers/${id}/${action}`, body);
+      if (response.data?.decisionId && response.data?.performer) setPerformer(response.data.performer);
+      return response.data;
+    }} /></div>}
 
     {/* Delete Modal */}
     {deleteModalOpen && (
@@ -541,7 +560,8 @@ const PerformerDetailPage = () => {
       isOpen={!!previewDoc}
       onClose={closePreview}
       performerId={id}
-      documentType={previewDoc?.type}
+      performer={performer}
+      initialDocumentType={previewDoc?.type}
       documentLabel={documentRequirements.find(r => r.type === previewDoc?.type)?.label || previewDoc?.type}
       performerName={performer ? `${performer.lastName} ${performer.firstName}` : ''}
     />

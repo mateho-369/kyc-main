@@ -18,12 +18,13 @@ const path = require('path');
 const express = require('express');
 const request = require('supertest');
 
-const mockState = { performers: new Map(), audit: [], nextId: 1 };
+const mockState = { performers: new Map(), audit: [], nextId: 1, decisions: [], outbox: [] };
 
 // JWT middleware stand-in: role/user id come from test headers
 jest.mock('../../middleware/hybrid-auth', () => (req, res, next) => {
   const role = req.header('x-test-role');
   if (!role) return res.status(401).json({ error: 'no token' });
+  if (req.header('x-test-system')) req.sharegramAuth = { authenticated: true };
   req.user = { id: Number(req.header('x-test-user-id') || 1), role, email: 'tester@example.com', sharegramUserId: null };
   return next();
 });
@@ -42,12 +43,17 @@ jest.mock('../../models', () => {
 
     changed() {}
 
-    async save() {
+    async save(options) {
+      if (mockState.reviewTransaction) expect(options.transaction).toBe(mockState.reviewTransaction);
       mockState.performers.set(this.id, clone(this.get()));
       return this;
     }
 
-    static async findByPk(id) {
+    static async findByPk(id, options) {
+      if (mockState.reviewTransaction) {
+        expect(options.transaction).toBe(mockState.reviewTransaction);
+        expect(options.lock).toBe('UPDATE');
+      }
       const row = mockState.performers.get(Number(id));
       return row ? new MockPerformer(clone(row)) : null;
     }
@@ -72,11 +78,36 @@ jest.mock('../../models', () => {
     }
   }
 
+  // Transaction boundary double: tests assert option propagation and rollback.
+  // This does not simulate MySQL isolation or real concurrent row locks.
+  MockPerformer.sequelize = {
+    transaction: async (callback) => {
+      const before = clone([...mockState.performers]);
+      const auditLength = mockState.audit.length;
+      const decisionLength = mockState.decisions.length;
+      const outboxLength = mockState.outbox.length;
+      mockState.reviewTransaction = { LOCK: { UPDATE: 'UPDATE' } };
+      try {
+        return await callback(mockState.reviewTransaction);
+      } catch (error) {
+        mockState.performers = new Map(before);
+        mockState.audit.length = auditLength;
+        mockState.decisions.length = decisionLength;
+        mockState.outbox.length = outboxLength;
+        throw error;
+      } finally {
+        mockState.reviewTransaction = null;
+      }
+    }
+  };
   return {
     Performer: MockPerformer,
+    PerformerDecision: { create: jest.fn(async (row, options) => { expect(options.transaction).toBe(mockState.reviewTransaction); mockState.decisions.push(row); return row; }) },
+    DecisionOutbox: { create: jest.fn(async (row, options) => { expect(options.transaction).toBe(mockState.reviewTransaction); mockState.outbox.push(row); return row; }) },
     // Same NOT NULL columns as server/models/AuditLog.js
     AuditLog: {
-      create: jest.fn(async (values) => {
+      create: jest.fn(async (values, options) => {
+        if (mockState.reviewTransaction) expect(options.transaction).toBe(mockState.reviewTransaction);
         ['userId', 'action', 'resourceType', 'resourceId'].forEach((column) => {
           if (values[column] === undefined || values[column] === null) {
             throw new Error(`notNull Violation: AuditLog.${column} cannot be null`);
@@ -93,6 +124,8 @@ jest.mock('../../models', () => {
     }
   };
 });
+
+jest.mock('../../services/webhookService', () => ({ triggerWebhook: jest.fn(async () => []) }));
 
 const { startSharegramReceiver, waitFor } = require('./helpers/sharegramReceiver');
 
@@ -150,8 +183,12 @@ beforeEach(() => {
   ['KYC_WEBHOOK_URL', 'KYC_WEBHOOK_SECRET', 'KYC_WEBHOOK_EVENTS'].forEach((key) => delete process.env[key]);
   mockState.performers.clear();
   mockState.audit.length = 0;
+  mockState.decisions.length = 0;
+  mockState.outbox.length = 0;
   mockState.nextId = 2;
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kyc-docs-'));
+  const root = require('../../services/documentSecurity').ROOT;
+  fs.mkdirSync(root, { recursive: true });
+  tmpDir = fs.mkdtempSync(path.join(root, 'security-test-'));
   ['log', 'warn', 'error'].forEach((level) => consoleSpies.push(jest.spyOn(console, level).mockImplementation(() => {})));
 });
 
@@ -238,7 +275,7 @@ describe('document type names from the UI (snake_case)', () => {
 });
 
 describe('Sharegram webhook from the real routes', () => {
-  test('verifying all required documents notifies document.verified and performer.approved', async () => {
+  test('verifying all required documents notifies documents only; final approval remains separate', async () => {
     receiver = await startSharegramReceiver(SECRET);
     process.env.KYC_WEBHOOK_URL = receiver.url;
     process.env.KYC_WEBHOOK_SECRET = SECRET;
@@ -249,17 +286,17 @@ describe('Sharegram webhook from the real routes', () => {
       expect(res.status).toBe(200);
     }
 
-    await waitFor(() => receiver.received.length === 4);
+    await waitFor(() => receiver.received.length === 3);
     receiver.received.forEach((entry) => expect(entry.signatureValid).toBe(true));
 
     const events = receiver.received.map((entry) => entry.body.event).sort();
-    expect(events).toEqual(['document.verified', 'document.verified', 'document.verified', 'performer.approved']);
-
-    const approved = receiver.received.find((entry) => entry.body.event === 'performer.approved').body.data;
-    expect(approved.performer).toMatchObject({ id: 1, status: 'active' });
-    expect(approved.performer.documents.agreementFile.verified).toBe(true);
-    expect(approved.owner.email).toBe('fbcreator2@gmail.com');
-    expect(mockState.performers.get(1).status).toBe('active');
+    expect(events).toEqual(['document.verified', 'document.verified', 'document.verified']);
+    for (const entry of receiver.received) {
+      expect(entry.body.data.performer.status).toBe('pending');
+      expect(entry.body.data.performer.kycStatus).toBe('not_started');
+    }
+    expect(mockState.performers.get(1).status).toBe('pending');
+    expect(mockState.performers.get(1).kycStatus).toBe('not_started');
   });
 
   test('creating a performer notifies performer.created with the SSO owner', async () => {
@@ -325,4 +362,220 @@ describe('Sharegram webhook from the real routes', () => {
     await waitFor(() => warnings().some((line) => line.includes('attempt 3/3')), 8000);
     expect(warnings().filter((line) => line.includes('ECONNREFUSED'))).toHaveLength(3);
   });
+});
+
+
+describe('auditable reviewer boundaries', () => {
+  test.each([
+    ['owner', OWNER], ['stranger', STRANGER],
+    ['system credential', { ...ADMIN, 'x-test-system': 'true' }],
+    ['synthetic admin', { ...ADMIN, 'x-test-user-id': '0' }]
+  ])('%s cannot approve or verify', async (label, headers) => {
+    seedPerformer();
+    expect((await request(app).post('/api/performers/1/approve').set(headers)).status).toBe(403);
+    expect((await request(app).put('/api/performers/1/documents/id_front/verify').set(headers)).status).toBe(403);
+    expect(mockState.performers.get(1).status).toBe('pending');
+    expect(mockState.audit).toHaveLength(0);
+  });
+
+  test('unauthenticated review is denied', async () => {
+    expect((await request(app).post('/api/performers/1/approve')).status).toBe(401);
+    expect((await request(app).put('/api/performers/1/documents/id_front/verify')).status).toBe(401);
+  });
+
+  test('approve commits accurate prior status and audit together', async () => {
+    seedPerformer();
+    for (const doc of Object.values(mockState.performers.get(1).documents)) if (doc) doc.verified = true;
+    const response = await request(app).post('/api/performers/1/approve').set(ADMIN);
+    expect(response.status).toBe(200);
+    expect(mockState.performers.get(1).status).toBe('active');
+    expect(mockState.audit).toContainEqual(expect.objectContaining({
+      userId: 1, action: 'approve', details: expect.objectContaining({ previousStatus: 'pending', previousKycStatus: 'not_started', newStatus: 'active', newKycStatus: 'verified' })
+    }));
+  });
+
+  test.each(['approve', 'documents/id_front/verify'])('audit failure rolls back %s and sends no event', async (route) => {
+    seedPerformer();
+    receiver = await startSharegramReceiver(SECRET);
+    process.env.KYC_WEBHOOK_URL = receiver.url;
+    process.env.KYC_WEBHOOK_SECRET = SECRET;
+    if (route === 'approve') for (const doc of Object.values(mockState.performers.get(1).documents)) if (doc) doc.verified = true;
+    require('../../models').AuditLog.create.mockRejectedValueOnce(new Error('audit unavailable'));
+    const method = route === 'approve' ? 'post' : 'put';
+    const response = await request(app)[method](`/api/performers/1/${route}`).set(ADMIN);
+    expect(response.status).toBe(500);
+    expect(mockState.performers.get(1).status).toBe('pending');
+    expect(mockState.performers.get(1).documents.idFront.verified).toBe(route === 'approve');
+    expect(mockState.decisions).toHaveLength(0);
+    expect(mockState.outbox).toHaveLength(0);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(receiver.received).toHaveLength(0);
+  });
+
+  test('unknown approval target is 404 with no audit', async () => {
+    expect((await request(app).post('/api/performers/999/approve').set(ADMIN)).status).toBe(404);
+    expect(mockState.audit).toHaveLength(0);
+  });
+
+  test('approval returns durable pending notification without calling legacy sender', async () => {
+    seedPerformer();
+    require('../../services/webhookService').triggerWebhook.mockClear();
+    for (const doc of Object.values(mockState.performers.get(1).documents)) if (doc) doc.verified = true;
+    const response = await request(app).post('/api/performers/1/approve').set(ADMIN);
+    expect(response.status).toBe(200);
+    expect(mockState.performers.get(1).status).toBe('active');
+    expect(response.body.notification).toMatchObject({ status: 'pending' });
+    expect(mockState.outbox).toHaveLength(1);
+    expect(require('../../services/webhookService').triggerWebhook).not.toHaveBeenCalled();
+  });
+
+  test('MariaDB string documents retain alias verification and readiness', async () => {
+    seedPerformer({ asString: true });
+    for (const type of ['agreement_file', 'id_front', 'selfie']) {
+      const response = await request(app).put(`/api/performers/1/documents/${type}/verify`).set(ADMIN);
+      expect(response.status).toBe(200);
+      expect(response.body.allVerified).toBe(type === 'selfie');
+    }
+    expect(mockState.performers.get(1).status).toBe('pending');
+  });
+});
+
+
+describe('explicit decision state machine', () => {
+  test.each(['approve', 'reject', 'request-correction'])('non-admin cannot %s even with role in body', async action => {
+    seedPerformer();
+    const r = await request(app).post(`/api/performers/1/${action}`).set(OWNER).send({ role: 'admin', reason: 'test' });
+    expect(r.status).toBe(403);
+  });
+  test('approval requires every required document', async () => {
+    seedPerformer();
+    expect((await request(app).post('/api/performers/1/approve').set(ADMIN)).status).toBe(409);
+    expect(mockState.outbox).toHaveLength(0);
+  });
+  test('rejection preserves reason/reviewer/time and emits minimal durable payload', async () => {
+    seedPerformer();
+    const r = await request(app).post('/api/performers/1/reject').set(ADMIN).send({ reason: 'Unable to verify', reasonCode: 'IDENTITY_MISMATCH' });
+    expect(r.status).toBe(200);
+    expect(r.body.performer).toMatchObject({ status: 'rejected', kycStatus: 'rejected' });
+    expect(mockState.decisions[0]).toMatchObject({ reviewerId: 1, reason: 'Unable to verify', reasonCode: 'IDENTITY_MISMATCH', previousStatus: 'pending' });
+    expect(mockState.decisions[0].createdAt).toBeInstanceOf(Date);
+    const payload = mockState.outbox[0].payload;
+    expect(payload).toMatchObject({ eventId: r.body.decisionId, eventType: 'performer.rejected', schemaVersion: 2, owner: { firebaseUid: expect.any(String) } });
+    expect(Object.keys(payload.performer).sort()).toEqual(['externalId', 'id', 'kycStatus', 'status']);
+    expect(JSON.stringify(payload)).not.toMatch(/email|lastName|firstName|documents|path|address|birth|Unable to verify/);
+    expect((await request(app).post('/api/performers/1/approve').set(ADMIN)).status).toBe(409);
+    expect((await request(app).post('/api/performers/1/resubmit').set(OWNER)).status).toBe(409);
+    expect((await request(app).put('/api/performers/1').set(OWNER).send({ lastName: 'changed' })).status).toBe(409);
+  });
+  test.each([{}, { reason: ' ' }, { reason: 'x', reasonCode: 'invalid code' }, { reason: 'x'.repeat(2001) }])('reject validates %j', async body => {
+    seedPerformer();
+    expect((await request(app).post('/api/performers/1/reject').set(ADMIN).send(body)).status).toBe(400);
+  });
+  test('correction and owner resubmission keep earlier decisions without emitting final event', async () => {
+    seedPerformer();
+    expect((await request(app).post('/api/performers/1/request-correction').set(ADMIN).send({ reason: 'Replace blurry ID' })).status).toBe(200);
+    expect(mockState.performers.get(1)).toMatchObject({ status: 'pending', kycStatus: 'in_progress', kycMetadata: { reviewState: 'correction_required' } });
+    expect(mockState.outbox).toHaveLength(0);
+    expect((await request(app).post('/api/performers/1/approve').set(ADMIN)).status).toBe(409);
+    expect((await request(app).post('/api/performers/1/resubmit').set(STRANGER)).status).toBe(403);
+    expect((await request(app).post('/api/performers/1/resubmit').set(OWNER)).status).toBe(200);
+    expect(mockState.decisions).toHaveLength(1);
+    expect(mockState.performers.get(1).kycMetadata.reviewState).toBe('submitted');
+  });
+  test('document rejection persists its reason without deciding performer', async () => {
+    seedPerformer();
+    const r = await request(app).put('/api/performers/1/documents/id_front/reject').set(ADMIN).send({ reason: 'Blurry' });
+    expect(r.status).toBe(200);
+    expect(mockState.performers.get(1).documents.idFront).toMatchObject({ verified: false, rejectionReason: 'Blurry', rejectedBy: 1 });
+    expect(mockState.performers.get(1).status).toBe('pending');
+    expect(mockState.audit[0].details.reason).toBe('Blurry');
+  });
+  test('missing external owner identity fails closed and outbox failure rolls back', async () => {
+    seedPerformer();
+    require('../../models').User.findByPk.mockResolvedValueOnce({ id: 7 });
+    expect((await request(app).post('/api/performers/1/reject').set(ADMIN).send({ reason: 'test' })).status).toBe(409);
+    require('../../models').DecisionOutbox.create.mockRejectedValueOnce(new Error('outbox unavailable'));
+    expect((await request(app).post('/api/performers/1/reject').set(ADMIN).send({ reason: 'test' })).status).toBe(500);
+    expect(mockState.performers.get(1).status).toBe('pending');
+    expect(mockState.decisions).toHaveLength(0);
+  });
+  test('legacy external status writers fail closed', async () => {
+    expect((await request(app).post('/api/performers/sync').set(ADMIN).send({ performers: [] })).status).toBe(409);
+    expect((await request(app).post('/api/performers/kyc-approved').send({ performerId: 1, kycStatus: 'approved' })).status).toBe(409);
+  });
+});
+
+
+describe('alternate writer guardrails', () => {
+  test('name changes invalidate prior document verification and ignore injected statuses', async () => {
+    seedPerformer();
+    for (const doc of Object.values(mockState.performers.get(1).documents)) if (doc) doc.verified = true;
+    const r = await request(app).put('/api/performers/1').set(OWNER).send({ lastName: 'Changed', status: 'active', kycStatus: 'verified', role: 'admin' });
+    expect(r.status).toBe(200);
+    const row = mockState.performers.get(1);
+    expect(row).toMatchObject({ status: 'pending', kycStatus: 'not_started' });
+    expect(row.documents.idFront.verified).toBe(false);
+    expect((await request(app).post('/api/performers/1/approve').set(ADMIN)).status).toBe(409);
+  });
+  test('final records cannot be deleted or document-verified', async () => {
+    seedPerformer(); mockState.performers.get(1).status = 'active'; mockState.performers.get(1).kycStatus = 'verified';
+    expect((await request(app).delete('/api/performers/1').set(OWNER)).status).toBe(409);
+    expect((await request(app).put('/api/performers/1/documents/id_front/verify').set(ADMIN)).status).toBe(409);
+    expect(mockState.performers.has(1)).toBe(true);
+  });
+  test('audit failure on update retains the old identity and documents', async () => {
+    seedPerformer();
+    require('../../models').AuditLog.create.mockRejectedValueOnce(new Error('audit unavailable'));
+    expect((await request(app).put('/api/performers/1').set(OWNER).send({ lastName: 'Changed' })).status).toBe(500);
+    expect(mockState.performers.get(1).lastName).toBe('山田');
+  });
+});
+
+
+describe('document security regression', () => {
+  test('unauthenticated read/write/decisions are denied', async () => {
+    for (const endpoint of ['/api/performers/1','/api/performers/1/documents/agreementFile']) expect((await request(app).get(endpoint)).status).toBe(401);
+    for (const action of ['approve','reject']) expect((await request(app).post(`/api/performers/1/${action}`).send({reason:'sample'})).status).toBe(401);
+  });
+  test('storage traversal and symlink escape fail closed',async()=>{
+    seedPerformer();
+    const row=mockState.performers.get(1), outside=path.join(os.tmpdir(),`outside-kyc-${Date.now()}.pdf`);
+    fs.writeFileSync(outside,'%PDF-private');
+    try {
+      row.documents.agreementFile.path=outside;
+      expect((await request(app).get('/api/performers/1/documents/agreementFile').set(OWNER)).status).toBe(404);
+      const link=path.join(tmpDir,'escape.pdf'); fs.symlinkSync(outside,link); row.documents.agreementFile.path=link;
+      expect((await request(app).get('/api/performers/1/documents/agreementFile').set(OWNER)).status).toBe(404);
+    } finally {fs.unlinkSync(outside);}
+  });
+  test('detail response strips storage paths and file reads prohibit caching',async()=>{
+    seedPerformer();
+    const detail=await request(app).get('/api/performers/1').set(OWNER);
+    expect(detail.status).toBe(200);expect(JSON.stringify(detail.body)).not.toContain(tmpDir);
+    const file=await request(app).get('/api/performers/1/documents/agreementFile').set(OWNER);
+    expect(file.status).toBe(200);expect(file.headers['cache-control']).toBe('private, no-store');
+    expect(file.headers['x-content-type-options']).toBe('nosniff');
+  });
+  test.each([['bad.jpg','image/jpeg','<script>'],['bad.jpg.php','image/jpeg','x'],['bad.pdf','image/jpeg','%PDF-1.4']])('rejects disguised upload %s',async(name,mime,bytes)=>{
+    seedPerformer();
+    const res=await request(app).put('/api/performers/1').set(OWNER).attach('idFront',Buffer.from(bytes),{filename:name,contentType:mime});
+    expect(res.status).toBe(400);expect(res.body.code).toBe('INVALID_UPLOAD');
+  });
+  test('denies cross-owner upload before writing a file',async()=>{
+    seedPerformer(); const root=require('../../services/documentSecurity').ROOT, before=fs.readdirSync(root).sort();
+    const res=await request(app).put('/api/performers/1').set({'x-test-role':'user','x-test-user-id':'99'}).attach('idFront',Buffer.from([255,216,255]),{filename:'front.jpg',contentType:'image/jpeg'});
+    expect(res.status).toBe(403);expect(fs.readdirSync(root).sort()).toEqual(before);
+  });
+  test('disabled database never returns a fabricated performer',async()=>{
+    process.env.DISABLE_DB='true';
+    try {const res=await request(app).get('/api/performers').set(OWNER);expect(res.status).toBe(503);expect(res.body.data).toBeUndefined();}
+    finally {delete process.env.DISABLE_DB;}
+  });
+  test('rejects uploads larger than 20 MiB and cleans the partial file',async()=>{
+    seedPerformer();const root=require('../../services/documentSecurity').ROOT,before=fs.readdirSync(root).sort();
+    const bytes=Buffer.alloc(20*1024*1024+1);bytes.write('%PDF-1.4');
+    const res=await request(app).put('/api/performers/1').set(OWNER).attach('agreementFile',bytes,{filename:'large.pdf',contentType:'application/pdf'});
+    expect(res.status).toBe(400);expect(fs.readdirSync(root).sort()).toEqual(before);
+  });
+
 });

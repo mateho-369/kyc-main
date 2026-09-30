@@ -1,171 +1,42 @@
 const crypto = require('crypto');
 const { SharegramIntegration, ApiLog } = require('../models');
-const { testModeSecurity, isTestMode } = require('./test-mode-security');
-
-/**
- * Sharegram API認証ミドルウェア
- * HMAC-SHA256ベースの署名検証とAPIキー認証をサポート
- */
+// Preserve the existing signed-message contract; do not trust a client-name
+// header as an administrator role. Hard-coded test credentials are not auth.
+const validTimestamp = value => typeof value === 'string' && /^\d{10}$/.test(value) &&
+  Math.abs(Math.floor(Date.now() / 1000) - Number(value)) <= 300;
+const equalSecret = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length > 0 &&
+  crypto.timingSafeEqual(crypto.createHash('sha256').update(a).digest(), crypto.createHash('sha256').update(b).digest());
+const validSignature = (received, expected) => typeof received === 'string' && /^[a-f0-9]{64}$/i.test(received) &&
+  crypto.timingSafeEqual(Buffer.from(received, 'hex'), Buffer.from(expected, 'hex'));
 const sharegramAuth = async (req, res, next) => {
   const startTime = Date.now();
-  
+  const deny = async () => {
+    await logApiRequest(req, res, 401, 'AUTHENTICATION_FAILED', startTime);
+    return res.status(401).json({ code: 'SHAREGRAM_AUTHENTICATION_FAILED' });
+  };
   try {
-    // ヘッダーからSharegram認証情報を取得
-    let apiKey = req.header('X-Sharegram-API-Key');
+    const authorization = req.header('Authorization');
+    const apiKey = req.header('X-Sharegram-API-Key') || (authorization?.startsWith('Bearer ') ? authorization.slice(7) : null);
     const signature = req.header('X-Sharegram-Signature');
     const timestamp = req.header('X-Sharegram-Timestamp');
     const integrationId = req.header('X-Sharegram-Integration-ID');
     const apiClient = req.header('X-API-Client');
-    
-    // 【修正】Bearer形式のAuthorizationヘッダーも受け入れる
-    if (!apiKey) {
-      const authHeader = req.header('Authorization');
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        apiKey = authHeader.replace('Bearer ', '');
-      }
-    }
-    
-    // テストモードチェック
-    if (isTestMode(apiKey)) {
-      // テストモードセキュリティミドルウェアを実行
-      return testModeSecurity(req, res, () => {
-        // テストモードでは簡略化された認証
-        req.sharegramAuth = {
-          integrationId: 'test-integration',
-          userId: 'test-user',
-          apiKey: 'test-mode',
-          apiClient: apiClient || 'test-client',
-          authenticated: true,
-          testMode: true
-        };
-        next();
-      });
-    }
-    
-    // 【修正】テストモードの場合は必須ヘッダーチェックを緩和
-    if (!apiKey) {
-      await logApiRequest(req, res, 401, 'Missing API key', startTime);
-      return res.status(401).json({
-        error: 'Authentication Required',
-        message: 'Missing API key in Authorization header or X-Sharegram-API-Key header',
-        requiredHeaders: ['Authorization: Bearer <api-key>', 'X-Sharegram-API-Key']
-      });
-    }
-
-    // テストモード以外の場合は通常の検証を実行
-    if (!isTestMode(apiKey)) {
-      // 必須ヘッダーの確認（通常モード）
-      if (!signature || !timestamp || !integrationId || !apiClient) {
-        await logApiRequest(req, res, 401, 'Missing required Sharegram headers', startTime);
-        return res.status(401).json({
-          error: 'Authentication Required',
-          message: 'Missing required Sharegram authentication headers',
-          missingHeaders: {
-            'X-Sharegram-Signature': !signature,
-            'X-Sharegram-Timestamp': !timestamp,
-            'X-Sharegram-Integration-ID': !integrationId,
-            'X-API-Client': !apiClient
-          }
-        });
-      }
-    }
-    
-    // テストモード以外の場合のAPI Client検証
-    if (!isTestMode(apiKey)) {
-      // X-API-Clientヘッダーの検証（sharegram単体も許可）
-      const validApiClients = ['sharegram-web', 'sharegram-mobile', 'sharegram-admin', 'sharegram-api', 'sharegram'];
-      if (!validApiClients.includes(apiClient)) {
-        await logApiRequest(req, res, 401, 'Invalid API client', startTime);
-        return res.status(401).json({
-          error: 'Authentication Failed',
-          message: 'Invalid API client identifier',
-          validClients: validApiClients
-        });
-      }
-    }
-    
-    // テストモード以外の場合の詳細検証
-    if (!isTestMode(apiKey)) {
-      // タイムスタンプの検証（5分以内）
-      const requestTime = parseInt(timestamp);
-      const currentTime = Math.floor(Date.now() / 1000);
-      const timeDiff = Math.abs(currentTime - requestTime);
-      
-      if (timeDiff > 300) { // 5分
-        await logApiRequest(req, res, 401, 'Request timestamp expired', startTime);
-        return res.status(401).json({
-          error: 'Authentication Failed',
-          message: 'Request timestamp is too old or too far in the future'
-        });
-      }
-      
-      // 統合設定の取得
-      const integration = await SharegramIntegration.findOne({
-        where: {
-          id: integrationId,
-          integrationType: 'api',
-          isActive: true
-        }
-      });
-      
-      if (!integration) {
-        await logApiRequest(req, res, 401, 'Invalid integration ID', startTime);
-        return res.status(401).json({
-          error: 'Authentication Failed',
-          message: 'Invalid or inactive integration'
-        });
-      }
-      
-      // APIキーの検証
-      const storedApiKey = integration.configuration.apiKey;
-      if (apiKey !== storedApiKey) {
-        await logApiRequest(req, res, 401, 'Invalid API key', startTime);
-        return res.status(401).json({
-          error: 'Authentication Failed',
-          message: 'Invalid API key'
-        });
-      }
-      
-      // 署名の検証
-      const payload = constructSignaturePayload(req, timestamp);
-      const expectedSignature = generateSignature(payload, integration.configuration.secretKey);
-      
-      if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-        await logApiRequest(req, res, 401, 'Invalid signature', startTime);
-        return res.status(401).json({
-          error: 'Authentication Failed',
-          message: 'Invalid request signature'
-        });
-      }
-    }
-    
-    // 認証成功 - リクエストに統合情報を追加
-    if (!isTestMode(apiKey)) {
-      req.sharegramIntegration = integration;
-      req.sharegramAuth = {
-        integrationId: integration.id,
-        userId: integration.userId,
-        apiKey: apiKey.substring(0, 8) + '...',
-        apiClient: apiClient,
-        authenticated: true,
-        timestamp: requestTime
-      };
-    } else {
-      // テストモードの場合は既に認証情報が設定されている
-      console.log('Test mode authentication successful for API key:', apiKey);
-    }
-    
-    // 成功ログ
-    await logApiRequest(req, res, 200, 'Authentication successful', startTime);
-    
-    next();
-  } catch (error) {
-    console.error('Sharegram authentication error:', error);
-    await logApiRequest(req, res, 500, error.message, startTime);
-    return res.status(500).json({
-      error: 'Authentication Error',
-      message: 'An error occurred during authentication'
-    });
+    if (!apiKey || !integrationId || !validTimestamp(timestamp) || !/^[a-f0-9]{64}$/i.test(signature || '') ||
+        !['sharegram-web','sharegram-mobile','sharegram-admin','sharegram-api','sharegram'].includes(apiClient)) return deny();
+    const integration = await SharegramIntegration.findOne({ where: { id: integrationId, integrationType: 'api', isActive: true } });
+    let configuration = integration?.configuration;
+    if (typeof configuration === 'string') configuration = JSON.parse(configuration);
+    if (!integration || !equalSecret(apiKey, configuration?.apiKey) ||
+        typeof configuration?.secretKey !== 'string' || Buffer.byteLength(configuration.secretKey) < 32) return deny();
+    const expected = generateSignature(constructSignaturePayload(req, timestamp), configuration.secretKey);
+    if (!validSignature(signature, expected)) return deny();
+    req.sharegramIntegration = integration;
+    req.sharegramAuth = { integrationId: integration.id, userId: integration.userId,
+      apiKey: '[redacted]', apiClient, authenticated: true, timestamp: Number(timestamp) };
+    await logApiRequest(req, res, 200, 'AUTHENTICATED', startTime);
+    return next();
+  } catch (_) {
+    return res.status(503).json({ code: 'SHAREGRAM_AUTHENTICATION_UNAVAILABLE' });
   }
 };
 
@@ -181,7 +52,7 @@ const sharegramWebhookAuth = async (req, res, next) => {
     const webhookId = req.header('X-Sharegram-Webhook-ID');
     const timestamp = req.header('X-Sharegram-Timestamp');
     
-    if (!signature || !webhookId || !timestamp) {
+    if (!signature || !webhookId || !validTimestamp(timestamp)) {
       await logApiRequest(req, res, 401, 'Missing webhook headers', startTime);
       return res.status(401).json({
         error: 'Webhook Authentication Failed',
@@ -198,7 +69,7 @@ const sharegramWebhookAuth = async (req, res, next) => {
       }
     });
     
-    if (!webhook) {
+    if (!webhook || typeof webhook.secret !== 'string' || Buffer.byteLength(webhook.secret) < 32) {
       await logApiRequest(req, res, 401, 'Invalid webhook ID', startTime);
       return res.status(401).json({
         error: 'Webhook Authentication Failed',
@@ -213,7 +84,7 @@ const sharegramWebhookAuth = async (req, res, next) => {
       .update(payload)
       .digest('hex');
     
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+    if (!validSignature(signature, expectedSignature)) {
       await logApiRequest(req, res, 401, 'Invalid webhook signature', startTime);
       return res.status(401).json({
         error: 'Webhook Authentication Failed',
@@ -280,14 +151,14 @@ async function logApiRequest(req, res, statusCode, message, startTime) {
     
     await ApiLog.create({
       method: req.method,
-      path: req.originalUrl || req.url,
+      path: (req.originalUrl || req.url).split('?')[0],
       headers: {
         'x-sharegram-api-key': req.header('X-Sharegram-API-Key') ? '***' : undefined,
         'x-sharegram-integration-id': req.header('X-Sharegram-Integration-ID'),
         'x-api-client': req.header('X-API-Client'),
         'user-agent': req.header('User-Agent')
       },
-      requestBody: req.body || {},
+      requestBody: {}, // Never persist authentication tokens or KYC request bodies.
       responseStatus: statusCode,
       responseBody: { message },
       responseTime,

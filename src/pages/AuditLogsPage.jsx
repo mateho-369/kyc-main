@@ -1,12 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 // import { getAuditLogs, exportAuditReport } from '../services/api';
 import { FiClock as Clock, FiDownload as Download, FiFileText as FileText, FiFilter as Filter, FiRefreshCw as RefreshCw } from 'react-icons/fi';
-import { useNavigate } from 'react-router-dom';  // useNavigateをインポート
 import { getAuditLogs, exportAuditReport } from '../services/auditService';
-import { debounce } from 'lodash'; // この行を追加
 
-const AuditLogsPage = () => {
-  const navigate = useNavigate();
+const AuditLogsPage = ({ allowExport = true } = {}) => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -17,42 +14,18 @@ const AuditLogsPage = () => {
     resourceType: ''
   });
   const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [lastFetchTime, setLastFetchTime] = useState(0); // 追加：最後のフェッチ時間を追跡
-
-  // useCallbackでfetchLogs関数をメモ化
-  const fetchLogs = useCallback(
-    debounce(async () => {
-      // 30秒以内の再取得を防止（キャッシュ機能）
-      const now = Date.now();
-      if (now - lastFetchTime < 30000 && logs.length > 0) {
-        console.log('キャッシュされたデータを使用します');
-        return;
-      }
-
-      setLoading(true);
-      try {
-        const data = await getAuditLogs(filters);
-        setLogs(data);
-        setLastFetchTime(now); // 最後のフェッチ時間を更新
-      } catch (err) {
-        setError('監査ログの取得に失敗しました');
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    }, 300), // 300ミリ秒のデバウンス
-    [filters, lastFetchTime, logs.length] // filtersが変わった時だけ関数を再作成
-  );
-
-  // useEffectの依存配列を空にして、初回のみ実行されるようにする
+  const [appliedFilters, setAppliedFilters] = useState({});
+  const [retryCount, setRetryCount] = useState(0);
   useEffect(() => {
-    fetchLogs();
-    
-    // クリーンアップ関数
-    return () => {
-      fetchLogs.cancel(); // デバウンス関数のキャンセル
-    };
-  }, []); // 空の依存配列
+    let cancelled = false;
+    setLoading(true);
+    getAuditLogs(appliedFilters).then(data => {
+      if (!cancelled) { setLogs(data); setError(''); }
+    }).catch(() => {
+      if (!cancelled) setError('監査ログの取得に失敗しました');
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [appliedFilters, retryCount]);
 
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
@@ -64,13 +37,13 @@ const AuditLogsPage = () => {
 
   const handleFilterSubmit = (e) => {
     e.preventDefault();
-    fetchLogs(); // フィルター適用時にfetchLogsを呼び出す
+    setAppliedFilters({ ...filters });
     setIsFilterOpen(false);
   };
 
   const handleExport = async () => {
     try {
-      await exportAuditReport(filters);
+      await exportAuditReport(appliedFilters);
     } catch (err) {
       setError('レポートのエクスポートに失敗しました');
       console.error(err);
@@ -85,6 +58,10 @@ const AuditLogsPage = () => {
       'update': '更新',
       'delete': '削除',
       'verify': '検証',
+      'approve': '承認',
+      'reject': '却下',
+      'request_correction': '修正依頼',
+      'resubmit': '再提出',
       'download': 'ダウンロード'
     };
     return actionMap[action] || action;
@@ -102,33 +79,35 @@ const AuditLogsPage = () => {
   if (loading) {
     return (
       <div className="flex justify-center items-center py-12">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-green-500"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-navy-500"></div>
       </div>
     );
   }
 
   return (
     <div className="py-6">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6">
         <h1 className="text-2xl font-bold text-gray-900">監査ログ</h1>
-        <div className="flex space-x-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setIsFilterOpen(!isFilterOpen)}
-            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-navy-500"
           >
             <Filter className="mr-2 h-4 w-4" />
             フィルター
           </button>
           <button
             onClick={handleExport}
-            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+            disabled={!allowExport}
+            title={!allowExport ? 'Demo export is unavailable' : undefined}
+            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-navy-500"
           >
             <Download className="mr-2 h-4 w-4" />
             エクスポート
           </button>
           <button
-            onClick={fetchLogs}
-            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+            onClick={() => setRetryCount(value => value + 1)}
+            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-navy-500"
           >
             <RefreshCw className="mr-2 h-4 w-4" />
             更新
@@ -156,7 +135,7 @@ const AuditLogsPage = () => {
                 name="startDate"
                 value={filters.startDate}
                 onChange={handleFilterChange}
-                className="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                className="mt-1 focus:ring-navy-500 focus:border-navy-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
               />
             </div>
             <div>
@@ -169,7 +148,7 @@ const AuditLogsPage = () => {
                 name="endDate"
                 value={filters.endDate}
                 onChange={handleFilterChange}
-                className="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                className="mt-1 focus:ring-navy-500 focus:border-navy-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
               />
             </div>
             <div>
@@ -181,7 +160,7 @@ const AuditLogsPage = () => {
                 name="action"
                 value={filters.action}
                 onChange={handleFilterChange}
-                className="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                className="mt-1 focus:ring-navy-500 focus:border-navy-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
               >
                 <option value="">すべて</option>
                 <option value="create">作成</option>
@@ -189,6 +168,9 @@ const AuditLogsPage = () => {
                 <option value="update">更新</option>
                 <option value="delete">削除</option>
                 <option value="verify">検証</option>
+                <option value="approve">承認</option>
+                <option value="reject">却下</option>
+                <option value="request_correction">修正依頼</option>
                 <option value="download">ダウンロード</option>
               </select>
             </div>
@@ -201,7 +183,7 @@ const AuditLogsPage = () => {
                 name="resourceType"
                 value={filters.resourceType}
                 onChange={handleFilterChange}
-                className="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                className="mt-1 focus:ring-navy-500 focus:border-navy-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
               >
                 <option value="">すべて</option>
                 <option value="performer">出演者</option>
@@ -212,13 +194,13 @@ const AuditLogsPage = () => {
               <button
                 type="button"
                 onClick={() => setIsFilterOpen(false)}
-                className="mr-3 inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                className="mr-3 inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-navy-500"
               >
                 キャンセル
               </button>
               <button
                 type="submit"
-                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-500 hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-navy-800 hover:bg-navy-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-navy-500"
               >
                 適用
               </button>

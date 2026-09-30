@@ -94,6 +94,14 @@ class MockUser {
   }
 }
 
+// Real transactions are mocked, with rollback so atomic provisioning is testable.
+MockUser.sequelize = { transaction: async callback => {
+  const beforeUsers = mockDb.users.map(u => ({...u}));
+  const beforeMappings = mockDb.firebaseUsers.map(u => ({...u}));
+  try {return await callback({LOCK:{UPDATE:'UPDATE'}});}
+  catch (e) {mockDb.users=beforeUsers.map(u=>new MockUser(u));mockDb.firebaseUsers=beforeMappings;throw e;}
+}};
+
 /**
  * Mirrors server/models/FirebaseUser.js — which has NO association to User,
  * no sequelize.transaction helper and no provider/lastLoginAt columns.
@@ -457,7 +465,8 @@ describe('Sharegram SSO -> POST /api/auth/firebase-session', () => {
       expect(res.status).toBe(200);
       expect(res.body.user.email).toBe('hana@gmail.com');
       expect(res.body.user.name).toBe('Hana');
-      expect(res.body.user.sharegramUserId).toBe('12046');
+      // Display-profile API results cannot establish an authorization binding.
+      expect(res.body.user.sharegramUserId).toBeNull();
       expect(axios.get).toHaveBeenCalledTimes(1);
     } finally {
       delete process.env.SHAREGRAM_ACCOUNT_API_URL;
@@ -519,7 +528,7 @@ describe('Sharegram SSO -> POST /api/auth/firebase-session', () => {
       const saved = mockDb.users.find((u) => u.email === 'hana@gmail.com');
       // the identity is still persisted in full ...
       expect(saved.name).toBe('Hana');
-      expect(saved.sharegramUserId).toBe('12046');
+      expect(saved.sharegramUserId).toBeNull();
       expect(saved.authProvider).toBe('firebase');
       // ... only the unusable picture is dropped (null, or left untouched)
       expect(saved.profilePicture ?? null).toBeNull();
@@ -607,4 +616,42 @@ describe('Sharegram SSO -> POST /api/auth/firebase-session', () => {
     expect(res.status).toBe(401);
     expect(mockDb.users).toHaveLength(0);
   });
+  it('does not relink a different Firebase UID sharing an email, including an admin', async () => {
+    const user = await MockUser.create({email:'makara@gmail.com',firebaseUid:'original-uid',role:'admin'});
+    const res = await request(buildApp()).post('/api/auth/firebase-session').send({idToken:firebaseIdTokenFor('uid-makara-0001')});
+    expect(res.status).toBe(409); expect(res.body.code).toBe('FIREBASE_ACCOUNT_LINK_REQUIRED');
+    expect(user.firebaseUid).toBe('original-uid'); expect(user.role).toBe('admin');
+  });
+  it('requires explicit linking even for an unbound local email account', async () => {
+    await MockUser.create({email:'makara@gmail.com',firebaseUid:null,role:'user'});
+    const res = await request(buildApp()).post('/api/auth/firebase-session').send({idToken:firebaseIdTokenFor('uid-makara-0001')});
+    expect(res.status).toBe(409); expect(mockDb.users).toHaveLength(1);
+  });
+  it.each([{isActive:false},{isLocked:true}])('rejects unavailable local accounts %j', async flags => {
+    await MockUser.create({email:'makara@gmail.com',firebaseUid:'uid-makara-0001',...flags});
+    const res = await request(buildApp()).post('/api/auth/firebase-session').send({idToken:firebaseIdTokenFor('uid-makara-0001')});
+    expect(res.status).toBe(403); expect(res.body.accessToken).toBeUndefined();
+  });
+  it.each(['auth/id-token-expired','auth/id-token-revoked','auth/user-disabled'])('fails when SDK rejects %s',async code=>{
+    mockVerifyIdToken.mockRejectedValueOnce(Object.assign(new Error('rejected'),{code}));
+    const res=await request(buildApp()).post('/api/auth/firebase-session').send({idToken:firebaseIdTokenFor('uid-makara-0001')});
+    expect(res.status).toBe(401); expect(mockDb.users).toHaveLength(0);
+    expect(mockVerifyIdToken).toHaveBeenLastCalledWith(firebaseIdTokenFor('uid-makara-0001'),true);
+  });
+  it('ignores public role input and disables self-service Firebase claims', async () => {
+    const res=await request(buildApp()).post('/api/auth/firebase-session').send({idToken:firebaseIdTokenFor('uid-makara-0001'),role:'admin'});
+    expect(res.status).toBe(200); expect(res.body.user.role).toBe('user');
+    const claims=await request(buildApp()).post('/api/auth/firebase-claims').send({sharegramUserId:'other-owner',kycPermissions:['admin']});
+    expect(claims.status).toBe(403);
+  });
+
+  it('rolls back new local identity if binding persistence fails',async()=>{
+    const original=MockFirebaseUser.findOrCreate;
+    MockFirebaseUser.findOrCreate=async()=>{throw new Error('database unavailable');};
+    try {
+      const res=await request(buildApp()).post('/api/auth/firebase-session').send({idToken:firebaseIdTokenFor('uid-makara-0001')});
+      expect(res.status).toBe(500);expect(mockDb.users).toHaveLength(0);
+    } finally {MockFirebaseUser.findOrCreate=original;}
+  });
+
 });

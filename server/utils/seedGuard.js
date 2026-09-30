@@ -18,9 +18,6 @@ const ROLES = ['admin', 'user'];
 
 const isProduction = () => String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 
-/** SEED_ALLOW_INSECURE=true のときだけ本番でも通す（事故り方の指定）。 */
-const allowInsecure = () => String(process.env.SEED_ALLOW_INSECURE || '').toLowerCase() === 'true';
-
 /** DB が無い環境（DISABLE_DB=true）では model が throw するので先に抜ける。 */
 const dbDisabled = () => String(process.env.DISABLE_DB || '').toLowerCase() === 'true';
 
@@ -28,18 +25,16 @@ const dbDisabled = () => String(process.env.DISABLE_DB || '').toLowerCase() === 
  * @param {string} name シード名（ログ用）
  * @param {{allowProduction?: boolean}} [opts] allowProduction:true なら本番でも実行する
  * @returns {boolean} true のときだけ続けてよい。false のときは呼び出し側が何もせず終わる。
- * @throws {Error} 本番で && SEED_ALLOW_INSECURE 未設定（＝誤実行を音を立てて止める）
+ * @throws {Error} Sample-account seeds always fail in production.
  */
 async function assertSeedAllowed(name, opts = {}) {
   if (dbDisabled()) {
     console.log(`[seed:${name}] DISABLE_DB=true のためスキップします（DBなしでは作れません）`);
     return false;
   }
-  if (isProduction() && !allowInsecure() && !opts.allowProduction) {
+  if (isProduction() && !opts.allowProduction) {
     throw new Error(
-      `[seed:${name}] production では実行を中止しました。` +
-      'ダミーアカウントの作成は意図的な操作だけです。本当に必要な場合は ' +
-      'SEED_ALLOW_INSECURE=true を設定してください（認証情報が .env に残る点に注意）'
+      `[seed:${name}] production sample-account seeding is disabled; SEED_ALLOW_INSECURE cannot override this protection.`
     );
   }
   return true;
